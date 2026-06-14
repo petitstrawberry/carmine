@@ -34,23 +34,6 @@ impl RenderPipeline {
         let stylesheet = css::parse_css(&css_text);
         let matches = css::compute_matches(&html, &stylesheet);
         let pseudo_matches = css::compute_pseudo_matches(&html, &stylesheet);
-        println!(
-            "[carmine] CSS: {} rules, {} bytes, {} matched elements",
-            stylesheet.rules.len(),
-            css_text.len(),
-            matches.len()
-        );
-        for rule in &stylesheet.rules {
-            println!(
-                "[carmine] rule: {} decls=[{}]",
-                rule.specificity,
-                rule.declarations
-                    .iter()
-                    .map(|d| format!("{}:{}", d.property, &d.value[..d.value.len().min(30)]))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-        }
         Self {
             html,
             matches,

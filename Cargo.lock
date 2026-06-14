@@ -124,19 +124,26 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 name = "carmine"
 version = "0.1.0"
 dependencies = [
- "ab_glyph",
+ "carmine-core",
  "clap",
- "csscolorparser",
- "cssparser",
- "ego-tree",
  "scarlet-os",
  "scarlet-sys",
  "scarlet-ui",
  "scarlet-ui-macros",
+ "url",
+]
+
+[[package]]
+name = "carmine-core"
+version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+ "csscolorparser",
+ "cssparser",
+ "ego-tree",
  "scraper",
  "taffy",
  "tiny-skia",
- "url",
 ]
 
 [[package]]

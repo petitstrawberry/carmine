@@ -1,0 +1,24 @@
+[package]
+name = "carmine"
+version = "0.1.0"
+edition = "2024"
+description = "A small pure-Rust HTML/CSS browser"
+
+[features]
+default = ["scarlet"]
+scarlet = [
+    "dep:scarlet-os",
+    "dep:scarlet-sys",
+    "dep:scarlet-ui",
+    "dep:scarlet-ui-macros",
+]
+
+[dependencies]
+carmine-core = { path = "../carmine-core" }
+clap = { version = "4", features = ["derive"] }
+url = "2"
+
+scarlet-os = { git = "https://github.com/petitstrawberry/Scarlet", package = "scarlet-os", optional = true }
+scarlet-sys = { git = "https://github.com/petitstrawberry/Scarlet", package = "scarlet-sys", optional = true }
+scarlet-ui = { git = "https://github.com/petitstrawberry/Scarlet", package = "scarlet-ui", default-features = false, features = ["std"], optional = true }
+scarlet-ui-macros = { git = "https://github.com/petitstrawberry/Scarlet", package = "scarlet-ui-macros", optional = true }

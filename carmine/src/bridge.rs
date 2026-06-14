@@ -1,6 +1,6 @@
 //! RGBA8 (tiny-skia Pixmap) → BGRA (ScarletUI Canvas) pixel bridge.
 
-use tiny_skia::Pixmap;
+use carmine_core::Pixmap;
 
 /// Convert a tiny-skia RGBA8 pixmap into the BGRA byte buffer expected by
 /// ScarletUI's `CanvasRenderCallback`.

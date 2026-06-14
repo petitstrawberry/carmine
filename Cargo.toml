@@ -1,8 +1,6 @@
-[package]
-name = "carmine"
-version = "0.1.0"
-edition = "2024"
-description = "A small pure-Rust HTML/CSS renderer"
+[workspace]
+members = ["carmine-core", "carmine"]
+resolver = "2"
 
 [profile.dev]
 opt-level = 2
@@ -10,28 +8,3 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
-
-[features]
-default = ["scarlet"]
-scarlet = [
-    "dep:scarlet-os",
-    "dep:scarlet-sys",
-    "dep:scarlet-ui",
-    "dep:scarlet-ui-macros",
-]
-
-[dependencies]
-scarlet-os = { git = "https://github.com/petitstrawberry/Scarlet", package = "scarlet-os", optional = true }
-scarlet-sys = { git = "https://github.com/petitstrawberry/Scarlet", package = "scarlet-sys", optional = true }
-scarlet-ui = { git = "https://github.com/petitstrawberry/Scarlet", package = "scarlet-ui", default-features = false, features = ["std"], optional = true }
-scarlet-ui-macros = { git = "https://github.com/petitstrawberry/Scarlet", package = "scarlet-ui-macros", optional = true }
-
-scraper = "0.22"
-ego-tree = "0.10"
-cssparser = "0.34"
-csscolorparser = "0.8"
-taffy = "0.7"
-tiny-skia = "0.11"
-ab_glyph = "0.2"
-clap = { version = "4", features = ["derive"] }
-url = "2"

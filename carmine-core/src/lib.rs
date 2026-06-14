@@ -1,5 +1,8 @@
 pub mod render;
 
+pub use render::{RenderOptions, RenderPipeline};
+pub use tiny_skia::Pixmap;
+
 pub const DEFAULT_HTML: &str = r#"<!DOCTYPE html>
 <html>
 <head>

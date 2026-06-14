@@ -1,6 +1,6 @@
 use std::fs;
 
-use carmine::{
+use carmine_core::{
     DEFAULT_HTML,
     render::{RenderOptions, RenderPipeline},
 };
@@ -13,6 +13,8 @@ use scarlet_ui::Application;
 mod bridge;
 #[cfg(feature = "scarlet")]
 mod browser;
+#[cfg(feature = "scarlet")]
+mod webview;
 
 #[derive(Parser)]
 #[command(name = "carmine", about = "A pure-Rust HTML/CSS renderer")]
