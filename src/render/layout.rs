@@ -419,16 +419,13 @@ fn estimate_content_width(
         + non_auto_px(style.margin_right, containing, vw, vh);
     let horizontal_padding = length_to_px(style.padding_left, containing, vw, vh)
         + length_to_px(style.padding_right, containing, vw, vh);
-    let horizontal_border = style.border_left_width + style.border_width;
 
     let mut border_box_width = match style.width {
         Length::Auto => (containing - horizontal_margin).max(0.0),
         _ => match style.box_sizing {
             BoxSizing::BorderBox => length_to_px(style.width, containing, vw, vh),
             BoxSizing::ContentBox => {
-                length_to_px(style.width, containing, vw, vh)
-                    + horizontal_padding
-                    + horizontal_border
+                length_to_px(style.width, containing, vw, vh) + horizontal_padding
             }
         },
     };
@@ -438,11 +435,9 @@ fn estimate_content_width(
     }
 
     Some(match style.box_sizing {
-        BoxSizing::BorderBox => {
-            (border_box_width - horizontal_padding - horizontal_border).max(0.0)
-        }
+        BoxSizing::BorderBox => (border_box_width - horizontal_padding).max(0.0),
         BoxSizing::ContentBox if style.width.is_auto() => {
-            (border_box_width - horizontal_padding - horizontal_border).max(0.0)
+            (border_box_width - horizontal_padding).max(0.0)
         }
         BoxSizing::ContentBox => length_to_px(style.width, containing, vw, vh).max(0.0),
     })
