@@ -1,28 +1,43 @@
 # Carmine
 
-Carmine is a small pure-Rust HTML/CSS renderer.
+Carmine is a small pure-Rust HTML/CSS renderer for Scarlet OS.
 
 It parses static HTML, applies a focused CSS cascade, computes layout with
 `taffy`, and paints the result into a `tiny-skia` pixmap. Scarlet OS is the
-first interactive frontend, but the renderer itself is no longer tied to
-Scarlet: it can also run headlessly and dump PNGs without building any Scarlet
-UI dependencies.
+primary interactive frontend, but the renderer core is fully independent and
+can also run headlessly to produce PNG output.
 
-## Shape
+## Workspace Layout
 
-Carmine is split into two layers:
+```text
+carmine/
+├── Cargo.toml                 [workspace]
+│
+├── carmine-core/              renderer core — zero Scarlet dependency
+│   └── src/
+│       ├── lib.rs             RenderPipeline, Pixmap re-export, DEFAULT_HTML
+│       └── render/
+│           ├── mod.rs         HTML → style → layout → paint pipeline
+│           ├── css.rs         CSS parsing, var() substitution, selector matching
+│           ├── style.rs       cascade, inheritance, value parsing
+│           ├── layout.rs      taffy tree construction and text measurement
+│           └── paint.rs       raster painting with tiny-skia
+│
+└── carmine/                   browser application
+    └── src/
+        ├── main.rs            CLI entry point (clap)
+        ├── webview.rs         WebView View — ScarletUI CanvasView wrapper  [scarlet]
+        ├── browser.rs         BrowserApp — Window + WebView                [scarlet]
+        └── bridge.rs          RGBA → BGRA pixel conversion                 [scarlet]
+```
 
-- `carmine` library: renderer core, independent of Scarlet.
-- `scarlet` feature: Scarlet UI window and canvas frontend.
-
-The default build enables the Scarlet frontend so existing `cargo run` behavior
-still opens a Carmine window. Disable default features when you only need the
-renderer or PNG output.
+The `scarlet` feature gate controls Scarlet UI integration. Without it, carmine
+runs headlessly (PNG dump only). The core crate has no feature flags at all.
 
 ## What It Does
 
-- Loads an HTML file from disk, or a built-in demo page when no file is given.
-- Extracts inline `<style>` blocks and applies a small CSS cascade.
+- Loads an HTML file from disk or renders a built-in demo page.
+- Extracts inline `<style>` blocks and applies a CSS cascade.
 - Lays out block, flex, grid, and inline text content with `taffy`.
 - Paints into a `tiny-skia` pixmap.
 - Presents through Scarlet UI when the `scarlet` feature is enabled.
@@ -41,25 +56,9 @@ Supported CSS is intentionally focused, but already includes:
 - Font size units including `px`, `rem`, `vw`, and `clamp(...)`.
 - Basic text wrapping, text transform, letter spacing, shadows, and list markers.
 
-## Repository Layout
-
-```text
-src/
-  lib.rs           renderer library entry point and built-in demo document
-  main.rs          CLI entry point
-  browser.rs       Scarlet UI window integration, behind the scarlet feature
-  bridge.rs        tiny-skia pixmap to Scarlet canvas conversion
-  render/
-    mod.rs         HTML -> style -> layout -> paint pipeline
-    css.rs         CSS parsing, variable substitution, selector matching
-    style.rs       computed style and declaration handling
-    layout.rs      taffy tree construction and text measurement
-    paint.rs       raster painting with tiny-skia
-```
-
 ## Running
 
-Run the default Scarlet viewer:
+Run the Scarlet viewer:
 
 ```bash
 cargo run
@@ -86,19 +85,19 @@ cargo run --no-default-features -- path/to/page.html --dump-png /tmp/carmine.png
 Build only the renderer core:
 
 ```bash
-cargo build --no-default-features
+cargo build -p carmine-core
 ```
 
 ## Using The Core
 
-The core renderer is available from the library:
+The core renderer is a standalone library crate:
 
 ```rust
-use carmine::render::RenderPipeline;
+use carmine_core::{RenderPipeline, Pixmap};
 
 let html = "<h1>Hello</h1>";
 let pipeline = RenderPipeline::new(html, 800, 600);
-let pixmap = pipeline.render(800, 600, 1.0);
+let pixmap: Pixmap = pipeline.render(800, 600, 1.0);
 pixmap.save_png("/tmp/hello.png")?;
 ```
 
@@ -106,10 +105,13 @@ pixmap.save_png("/tmp/hello.png")?;
 
 The `scarlet` feature enables the interactive frontend:
 
-- `browser.rs` creates a Scarlet UI `Window` with a `CanvasView`.
+- `webview.rs` implements a ScarletUI `View` that wraps a `CanvasView` with
+  the render pipeline. It is designed to be reusable — any ScarletUI app can
+  embed a `WebView` component.
+- `browser.rs` is the `BrowserApp` that creates a `Window` containing a
+  `WebView`. Future toolbar and navigation UI will be added here.
 - `bridge.rs` swizzles tiny-skia RGBA pixels into the BGRA format expected by
   Scarlet UI.
-
 
 ## Development Notes
 
@@ -127,8 +129,9 @@ Useful checks:
 
 ```bash
 cargo fmt
-cargo build
-cargo build --no-default-features
+cargo build -p carmine-core
+cargo build -p carmine --no-default-features
+cargo build -p carmine --target riscv64gc-unknown-scarlet
 cargo run --no-default-features -- path/to/page.html --dump-png /tmp/out.png
 ```
 
