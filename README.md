@@ -110,14 +110,6 @@ The `scarlet` feature enables the interactive frontend:
 - `bridge.rs` swizzles tiny-skia RGBA pixels into the BGRA format expected by
   Scarlet UI.
 
-Carmine currently depends on local Scarlet crates through relative paths when
-that feature is enabled. Keep the repositories side by side:
-
-```text
-Development/Rust/
-  Scarlet/
-  carmine/
-```
 
 ## Development Notes
 
