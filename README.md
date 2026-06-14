@@ -1,6 +1,6 @@
 # Carmine
 
-Carmine is a small pure-Rust HTML/CSS renderer for Scarlet OS.
+Carmine is a small pure-Rust HTML/CSS renderer.
 
 It parses static HTML, applies a focused CSS cascade, computes layout with
 `taffy`, and paints the result into a `tiny-skia` pixmap. Scarlet OS is the
