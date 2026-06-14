@@ -94,10 +94,11 @@ fn paint_node(node: &LayoutNode, pixmap: &mut Pixmap, scale: f32) {
                 pixmap,
                 x,
                 y,
+                w,
                 h,
                 node.style.border_left_width * scale,
                 br,
-                ska_color(color),
+                color,
             );
         }
     }
@@ -696,12 +697,31 @@ fn draw_left_border(
     pixmap: &mut Pixmap,
     x: f32,
     y: f32,
+    w: f32,
     h: f32,
     width: f32,
     radius: f32,
-    color: SkColor,
+    color: Color,
 ) {
-    fill_rounded_rect(pixmap, x, y, width, h, radius.min(width / 2.0), color);
+    if width <= 0.0 || h <= 0.0 {
+        return;
+    }
+
+    let min_x = x.max(0.0).floor() as i32;
+    let min_y = y.max(0.0).floor() as i32;
+    let max_x = (x + width).min(pixmap.width() as f32).ceil() as i32;
+    let max_y = (y + h).min(pixmap.height() as f32).ceil() as i32;
+    let pw = pixmap.width() as usize;
+
+    for py in min_y..max_y {
+        for px in min_x..max_x {
+            let fx = px as f32 + 0.5;
+            let fy = py as f32 + 0.5;
+            if inside_rounded_rect(fx, fy, x, y, w, h, radius) {
+                blend_pixel(pixmap.data_mut(), pw, px as usize, py as usize, color);
+            }
+        }
+    }
 }
 
 fn build_rounded_rect_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Path> {
