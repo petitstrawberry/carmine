@@ -1,0 +1,28 @@
+[package]
+name = "carmine"
+version = "0.1.0"
+edition = "2024"
+description = "A pure-Rust web browser for Scarlet OS"
+
+[profile.dev]
+opt-level = 2
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
+[dependencies]
+scarlet-os = { path = "../Scarlet/user/lib/scarlet-os" }
+scarlet-sys = { path = "../Scarlet/user/lib/scarlet-sys" }
+scarlet-ui = { path = "../Scarlet/user/lib/scarlet-ui", default-features = false, features = ["std"] }
+scarlet-ui-macros = { path = "../Scarlet/user/lib/scarlet-ui-macros" }
+
+scraper = "0.22"
+ego-tree = "0.10"
+cssparser = "0.34"
+csscolorparser = "0.8"
+taffy = "0.7"
+tiny-skia = "0.11"
+ab_glyph = "0.2"
+clap = { version = "4", features = ["derive"] }
+url = "2"
