@@ -4,8 +4,9 @@ use scarlet_ui::graphics;
 use scarlet_ui::prelude::*;
 use scarlet_ui::{Application, CanvasView, ComponentElement, Size, Window};
 
+use carmine::render::RenderPipeline;
+
 use crate::bridge;
-use crate::render::RenderPipeline;
 
 pub struct BrowserApp {
     pipeline: Rc<RenderPipeline>,
