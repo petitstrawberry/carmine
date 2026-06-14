@@ -149,7 +149,9 @@ pub enum Display {
     Block,
     Inline,
     Flex,
+    InlineFlex,
     Grid,
+    InlineGrid,
     None,
 }
 
@@ -267,6 +269,7 @@ pub fn compute_styles(
     matches: &MatchMap,
     pseudo_matches: &PseudoMatchMap,
     viewport_w: u32,
+    body_margin: f32,
 ) -> StyledNode {
     let root = html.tree.root();
     cascade(
@@ -275,6 +278,7 @@ pub fn compute_styles(
         pseudo_matches,
         &default_block(),
         viewport_w as f32,
+        body_margin,
     )
 }
 
@@ -284,10 +288,18 @@ fn cascade(
     pseudo_matches: &PseudoMatchMap,
     parent: &ComputedStyle,
     viewport_w: f32,
+    body_margin: f32,
 ) -> StyledNode {
     match node_ref.value() {
         ScraperNode::Document | ScraperNode::Fragment => {
-            let children = walk_children(node_ref, matches, pseudo_matches, parent, viewport_w);
+            let children = walk_children(
+                node_ref,
+                matches,
+                pseudo_matches,
+                parent,
+                viewport_w,
+                body_margin,
+            );
             StyledNode {
                 kind: StyledKind::Document,
                 style: parent.clone(),
@@ -299,7 +311,7 @@ fn cascade(
         ScraperNode::Element(el) => {
             let tag = el.name().to_string();
             let id = node_ref.id();
-            let mut style = default_for_tag(&tag);
+            let mut style = default_for_tag(&tag, body_margin);
 
             let matched_count = matches.get(&id).map_or(0, |d| d.len());
             if matched_count > 0 {
@@ -403,7 +415,14 @@ fn cascade(
             let children = if style.display == Display::None {
                 Vec::new()
             } else {
-                walk_children(node_ref, matches, pseudo_matches, &style, viewport_w)
+                walk_children(
+                    node_ref,
+                    matches,
+                    pseudo_matches,
+                    &style,
+                    viewport_w,
+                    body_margin,
+                )
             };
 
             StyledNode {
@@ -536,11 +555,12 @@ fn walk_children(
     pseudo_matches: &PseudoMatchMap,
     parent: &ComputedStyle,
     viewport_w: f32,
+    body_margin: f32,
 ) -> Vec<StyledNode> {
     node_ref
         .children()
         .filter(|c| !is_ignored(c.value()))
-        .map(|c| cascade(&c, matches, pseudo_matches, parent, viewport_w))
+        .map(|c| cascade(&c, matches, pseudo_matches, parent, viewport_w, body_margin))
         .collect()
 }
 
@@ -645,18 +665,20 @@ fn default_block() -> ComputedStyle {
     }
 }
 
-fn default_for_tag(tag: &str) -> ComputedStyle {
+fn default_for_tag(tag: &str, body_margin: f32) -> ComputedStyle {
     let base = default_block();
     match tag {
-        "html" | "body" => ComputedStyle {
-            margin_top: Length::px(8.0),
-            margin_bottom: Length::px(8.0),
-            padding_top: Length::px(8.0),
-            padding_right: Length::px(8.0),
-            padding_bottom: Length::px(8.0),
-            padding_left: Length::px(8.0),
-            ..base
-        },
+        "html" => base,
+        "body" => {
+            let margin = body_margin.max(0.0);
+            ComputedStyle {
+                margin_top: Length::px(margin),
+                margin_right: Length::px(margin),
+                margin_bottom: Length::px(margin),
+                margin_left: Length::px(margin),
+                ..base
+            }
+        }
         "head" | "title" | "meta" | "link" | "style" | "script" => ComputedStyle {
             display: Display::None,
             ..base
@@ -1230,8 +1252,8 @@ fn parse_display(value: &str) -> Option<Display> {
         "inline" => Some(Display::Inline),
         "flex" => Some(Display::Flex),
         "grid" => Some(Display::Grid),
-        "inline-flex" => Some(Display::Flex),
-        "inline-grid" => Some(Display::Grid),
+        "inline-flex" => Some(Display::InlineFlex),
+        "inline-grid" => Some(Display::InlineGrid),
         "none" => Some(Display::None),
         _ => None,
     }

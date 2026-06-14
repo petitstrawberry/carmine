@@ -6,7 +6,7 @@ use taffy::style::{
 use taffy::{NodeId, TaffyTree};
 
 use crate::render::style::{
-    AlignItems, ComputedStyle, Display as StyleDisplay, FlexDirection as StyleFlexDir,
+    AlignItems, BoxSizing, ComputedStyle, Display as StyleDisplay, FlexDirection as StyleFlexDir,
     FlexWrap as StyleFlexWrap, JustifyContent, Length, StyledKind, StyledNode,
 };
 
@@ -39,7 +39,7 @@ pub fn layout(root: &StyledNode, viewport_w: u32, viewport_h: u32) -> LayoutNode
     let mut tree: TaffyTree<TextMeasureData> = TaffyTree::new();
     let vw = viewport_w as f32;
     let vh = viewport_h as f32;
-    let link = build_taffy_tree(root, &mut tree, vw, vh);
+    let link = build_taffy_tree(root, &mut tree, vw, vh, Some(vw));
 
     let available = Size {
         width: AvailableSpace::Definite(vw),
@@ -64,6 +64,7 @@ fn build_taffy_tree<'a>(
     tree: &mut TaffyTree<TextMeasureData>,
     vw: f32,
     vh: f32,
+    containing_content_width: Option<f32>,
 ) -> TaffyLink<'a> {
     if node.style.display == StyleDisplay::None {
         let id = tree
@@ -80,6 +81,7 @@ fn build_taffy_tree<'a>(
         };
     }
 
+    let node_content_width = estimate_content_width(node, containing_content_width, vw, vh);
     let visible_children: Vec<&StyledNode> = node
         .children
         .iter()
@@ -97,11 +99,28 @@ fn build_taffy_tree<'a>(
     let has_block_children = visible_children.iter().any(|c| {
         matches!(
             c.style.display,
-            StyleDisplay::Block | StyleDisplay::Flex | StyleDisplay::Grid
+            StyleDisplay::Block
+                | StyleDisplay::Flex
+                | StyleDisplay::InlineFlex
+                | StyleDisplay::Grid
+                | StyleDisplay::InlineGrid
         )
     });
+    let has_element_children = visible_children
+        .iter()
+        .any(|c| matches!(c.kind, StyledKind::Element { .. }));
+    let is_flex_or_grid_container = matches!(
+        node.style.display,
+        StyleDisplay::Flex
+            | StyleDisplay::InlineFlex
+            | StyleDisplay::Grid
+            | StyleDisplay::InlineGrid
+    );
+    let should_collapse_inline_text = !has_block_children
+        && (!is_flex_or_grid_container || !has_element_children)
+        && !visible_children.is_empty();
 
-    if !has_block_children && !visible_children.is_empty() {
+    if should_collapse_inline_text {
         let text = collapse_html_whitespace(&collect_inline_text(node));
         if !text.trim().is_empty() {
             let ctx = TextMeasureData {
@@ -109,7 +128,10 @@ fn build_taffy_tree<'a>(
                 font_size: node.style.font_size,
             };
             let id = tree
-                .new_leaf_with_context(to_taffy_style_for_node(node, vw, vh), ctx)
+                .new_leaf_with_context(
+                    to_taffy_style_for_node(node, vw, vh, node_content_width),
+                    ctx,
+                )
                 .expect("taffy new_leaf_with_context");
             return TaffyLink {
                 styled: node,
@@ -128,11 +150,14 @@ fn build_taffy_tree<'a>(
                     text,
                     font_size: node.style.font_size,
                 };
-                tree.new_leaf_with_context(to_taffy_style_for_node(node, vw, vh), ctx)
-                    .expect("taffy new_leaf_with_context")
+                tree.new_leaf_with_context(
+                    to_taffy_style_for_node(node, vw, vh, node_content_width),
+                    ctx,
+                )
+                .expect("taffy new_leaf_with_context")
             }
             _ => tree
-                .new_leaf(to_taffy_style_for_node(node, vw, vh))
+                .new_leaf(to_taffy_style_for_node(node, vw, vh, node_content_width))
                 .expect("taffy new_leaf"),
         };
         TaffyLink {
@@ -144,11 +169,14 @@ fn build_taffy_tree<'a>(
     } else {
         let children: Vec<TaffyLink> = visible_children
             .iter()
-            .map(|c| build_taffy_tree(c, tree, vw, vh))
+            .map(|c| build_taffy_tree(c, tree, vw, vh, node_content_width))
             .collect();
         let child_ids: Vec<NodeId> = children.iter().map(|c| c.taffy_id).collect();
         let id = tree
-            .new_with_children(to_taffy_style_for_node(node, vw, vh), &child_ids)
+            .new_with_children(
+                to_taffy_style_for_node(node, vw, vh, node_content_width),
+                &child_ids,
+            )
             .expect("taffy new_with_children");
         TaffyLink {
             styled: node,
@@ -241,8 +269,8 @@ fn extract(
 fn to_taffy_style(s: &ComputedStyle, vw: f32, vh: f32) -> TaffyStyle {
     let display = match s.display {
         StyleDisplay::None => TaffyDisplay::None,
-        StyleDisplay::Flex => TaffyDisplay::Flex,
-        StyleDisplay::Grid => {
+        StyleDisplay::Flex | StyleDisplay::InlineFlex => TaffyDisplay::Flex,
+        StyleDisplay::Grid | StyleDisplay::InlineGrid => {
             if s.grid_template_columns.is_empty() {
                 TaffyDisplay::Flex
             } else {
@@ -258,7 +286,7 @@ fn to_taffy_style(s: &ComputedStyle, vw: f32, vh: f32) -> TaffyStyle {
         StyleFlexDir::RowReverse => FlexDirection::RowReverse,
         StyleFlexDir::ColumnReverse => FlexDirection::ColumnReverse,
         StyleFlexDir::Unspecified => {
-            if s.display == StyleDisplay::Flex {
+            if matches!(s.display, StyleDisplay::Flex | StyleDisplay::InlineFlex) {
                 FlexDirection::Row
             } else {
                 FlexDirection::Column
@@ -272,7 +300,13 @@ fn to_taffy_style(s: &ComputedStyle, vw: f32, vh: f32) -> TaffyStyle {
         JustifyContent::FlexEnd => taffy::style::JustifyContent::FlexEnd,
         JustifyContent::SpaceBetween => taffy::style::JustifyContent::SpaceBetween,
         JustifyContent::SpaceAround => taffy::style::JustifyContent::SpaceAround,
-        JustifyContent::Unspecified => taffy::style::JustifyContent::FlexStart,
+        JustifyContent::Unspecified => {
+            if matches!(s.display, StyleDisplay::Grid | StyleDisplay::InlineGrid) {
+                taffy::style::JustifyContent::Stretch
+            } else {
+                taffy::style::JustifyContent::FlexStart
+            }
+        }
     };
 
     let align_items = match s.align_items {
@@ -314,7 +348,7 @@ fn to_taffy_style(s: &ComputedStyle, vw: f32, vh: f32) -> TaffyStyle {
             crate::render::style::BoxSizing::BorderBox => taffy::style::BoxSizing::BorderBox,
             crate::render::style::BoxSizing::ContentBox => taffy::style::BoxSizing::ContentBox,
         },
-        grid_template_columns: parse_grid_tracks(&s.grid_template_columns, vw, vh),
+        grid_template_columns: parse_grid_tracks(&s.grid_template_columns, vw, vh, None, None, 0.0),
         margin: Rect {
             top: length_to_lpa(s.margin_top, vw, vh),
             bottom: length_to_lpa(s.margin_bottom, vw, vh),
@@ -332,8 +366,24 @@ fn to_taffy_style(s: &ComputedStyle, vw: f32, vh: f32) -> TaffyStyle {
     }
 }
 
-fn to_taffy_style_for_node(node: &StyledNode, vw: f32, vh: f32) -> TaffyStyle {
+fn to_taffy_style_for_node(
+    node: &StyledNode,
+    vw: f32,
+    vh: f32,
+    available_content_width: Option<f32>,
+) -> TaffyStyle {
     let mut style = to_taffy_style(&node.style, vw, vh);
+    let auto_fit_gap = available_content_width
+        .map(|width| length_to_px(node.style.gap, width, vw, vh))
+        .unwrap_or(0.0);
+    style.grid_template_columns = parse_grid_tracks(
+        &node.style.grid_template_columns,
+        vw,
+        vh,
+        Some(visible_layout_child_count(node)),
+        available_content_width,
+        auto_fit_gap,
+    );
     if matches!(node.kind, StyledKind::Document) {
         style.size.width = taffy::style::Dimension::Length(vw);
         style.size.height = taffy::style::Dimension::Length(vh);
@@ -341,7 +391,79 @@ fn to_taffy_style_for_node(node: &StyledNode, vw: f32, vh: f32) -> TaffyStyle {
     style
 }
 
-fn parse_grid_tracks(text: &str, vw: f32, vh: f32) -> Vec<taffy::style::TrackSizingFunction> {
+fn visible_layout_child_count(node: &StyledNode) -> usize {
+    node.children
+        .iter()
+        .filter(|child| {
+            if child.style.display == StyleDisplay::None {
+                return false;
+            }
+            if let StyledKind::Text(text) = &child.kind {
+                return !text.trim().is_empty();
+            }
+            true
+        })
+        .count()
+}
+
+fn estimate_content_width(
+    node: &StyledNode,
+    containing_content_width: Option<f32>,
+    vw: f32,
+    vh: f32,
+) -> Option<f32> {
+    let containing = containing_content_width?;
+    let style = &node.style;
+
+    let horizontal_margin = non_auto_px(style.margin_left, containing, vw, vh)
+        + non_auto_px(style.margin_right, containing, vw, vh);
+    let horizontal_padding = length_to_px(style.padding_left, containing, vw, vh)
+        + length_to_px(style.padding_right, containing, vw, vh);
+    let horizontal_border = style.border_left_width + style.border_width;
+
+    let mut border_box_width = match style.width {
+        Length::Auto => (containing - horizontal_margin).max(0.0),
+        _ => match style.box_sizing {
+            BoxSizing::BorderBox => length_to_px(style.width, containing, vw, vh),
+            BoxSizing::ContentBox => {
+                length_to_px(style.width, containing, vw, vh)
+                    + horizontal_padding
+                    + horizontal_border
+            }
+        },
+    };
+
+    if !style.max_width.is_auto() {
+        border_box_width = border_box_width.min(length_to_px(style.max_width, containing, vw, vh));
+    }
+
+    Some(match style.box_sizing {
+        BoxSizing::BorderBox => {
+            (border_box_width - horizontal_padding - horizontal_border).max(0.0)
+        }
+        BoxSizing::ContentBox if style.width.is_auto() => {
+            (border_box_width - horizontal_padding - horizontal_border).max(0.0)
+        }
+        BoxSizing::ContentBox => length_to_px(style.width, containing, vw, vh).max(0.0),
+    })
+}
+
+fn non_auto_px(length: Length, container: f32, vw: f32, vh: f32) -> f32 {
+    if length.is_auto() {
+        0.0
+    } else {
+        length_to_px(length, container, vw, vh)
+    }
+}
+
+fn parse_grid_tracks(
+    text: &str,
+    vw: f32,
+    vh: f32,
+    auto_fit_item_count: Option<usize>,
+    auto_fit_available_width: Option<f32>,
+    auto_fit_gap: f32,
+) -> Vec<taffy::style::TrackSizingFunction> {
     use taffy::style::{GridTrackRepetition, TrackSizingFunction};
 
     let text = text.trim();
@@ -354,19 +476,26 @@ fn parse_grid_tracks(text: &str, vw: f32, vh: f32) -> Vec<taffy::style::TrackSiz
         if parts.len() != 2 {
             return Vec::new();
         }
+        let track_str = parts[1].trim();
+        let tracks = parse_single_track_list(track_str, vw, vh);
+        if tracks.is_empty() {
+            return Vec::new();
+        }
         let count = match parts[0].trim() {
-            "auto-fit" => GridTrackRepetition::AutoFit,
+            "auto-fit" => auto_fit_repeat_count(
+                &tracks,
+                auto_fit_item_count,
+                auto_fit_available_width,
+                auto_fit_gap,
+            )
+            .map(GridTrackRepetition::Count)
+            .unwrap_or(GridTrackRepetition::AutoFit),
             "auto-fill" => GridTrackRepetition::AutoFill,
             n => match n.parse::<u16>() {
                 Ok(num) => GridTrackRepetition::Count(num),
                 Err(_) => return Vec::new(),
             },
         };
-        let track_str = parts[1].trim();
-        let tracks = parse_single_track_list(track_str, vw, vh);
-        if tracks.is_empty() {
-            return Vec::new();
-        }
         return vec![TrackSizingFunction::Repeat(count, tracks)];
     }
 
@@ -407,6 +536,40 @@ fn parse_single_track_list(
     }
 
     result
+}
+
+fn auto_fit_repeat_count(
+    tracks: &[taffy::style::NonRepeatedTrackSizingFunction],
+    item_count: Option<usize>,
+    available_width: Option<f32>,
+    gap: f32,
+) -> Option<u16> {
+    let item_count = item_count?.max(1);
+    let available_width = available_width?.max(0.0);
+    let track_count = tracks.len().max(1) as f32;
+    let pattern_width = tracks
+        .iter()
+        .map(|track| auto_repeat_track_breadth(track, available_width))
+        .sum::<f32>()
+        .max(track_count);
+
+    let gap = gap.max(0.0);
+    let max_fit = ((available_width + gap) / (pattern_width + track_count * gap))
+        .floor()
+        .max(1.0) as usize;
+    u16::try_from(item_count.min(max_fit).max(1)).ok()
+}
+
+fn auto_repeat_track_breadth(
+    track: &taffy::style::NonRepeatedTrackSizingFunction,
+    available_width: f32,
+) -> f32 {
+    track
+        .max
+        .definite_value(Some(available_width))
+        .or_else(|| track.min.definite_value(Some(available_width)))
+        .unwrap_or(1.0)
+        .max(1.0)
 }
 
 fn parse_min_track(s: &str, vw: f32, vh: f32) -> taffy::style::MinTrackSizingFunction {
@@ -507,6 +670,17 @@ fn length_to_lp(l: Length, vw: f32, vh: f32) -> LengthPercentage {
     }
 }
 
+fn length_to_px(l: Length, container: f32, vw: f32, vh: f32) -> f32 {
+    match l {
+        Length::Px(v) => v,
+        Length::Percent(v) => container * v,
+        Length::Vw(v) => v * vw / 100.0,
+        Length::Vh(v) => v * vh / 100.0,
+        Length::Clamp { .. } => l.resolve_px(container, vw),
+        Length::Auto | Length::Zero => 0.0,
+    }
+}
+
 fn length_to_lpa(l: Length, vw: f32, vh: f32) -> LengthPercentageAuto {
     match l {
         Length::Px(v) => LengthPercentageAuto::Length(v),
@@ -587,4 +761,37 @@ fn measure_wrapped_text(text: &str, char_width: f32, max_width: f32) -> (f32, us
 
     max_line_width = max_line_width.max(line_width).min(max_width);
     (max_line_width, lines)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_fit_collapses_empty_tracks_after_counting_available_width() {
+        let tracks = parse_single_track_list("minmax(230px, 1fr)", 800.0, 600.0);
+
+        assert_eq!(
+            auto_fit_repeat_count(&tracks, Some(2), Some(684.0), 18.0),
+            Some(2)
+        );
+        assert_eq!(
+            auto_fit_repeat_count(&tracks, Some(5), Some(684.0), 18.0),
+            Some(2)
+        );
+        assert_eq!(
+            auto_fit_repeat_count(&tracks, Some(5), Some(980.0), 18.0),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn auto_fit_keeps_at_least_one_track_when_too_narrow() {
+        let tracks = parse_single_track_list("minmax(230px, 1fr)", 320.0, 600.0);
+
+        assert_eq!(
+            auto_fit_repeat_count(&tracks, Some(3), Some(180.0), 18.0),
+            Some(1)
+        );
+    }
 }

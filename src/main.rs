@@ -1,6 +1,9 @@
 use std::fs;
 
-use carmine::{DEFAULT_HTML, render::RenderPipeline};
+use carmine::{
+    DEFAULT_HTML,
+    render::{RenderOptions, RenderPipeline},
+};
 use clap::Parser;
 
 #[cfg(feature = "scarlet")]
@@ -24,6 +27,9 @@ struct Args {
 
     #[arg(long, default_value_t = 600)]
     height: u32,
+
+    #[arg(long, default_value_t = 0.0)]
+    body_margin: f32,
 }
 
 fn main() {
@@ -45,8 +51,12 @@ fn main() {
         None => DEFAULT_HTML.to_string(),
     };
 
+    let render_options = RenderOptions {
+        body_margin: args.body_margin,
+    };
+
     if let Some(path) = args.dump_png {
-        let pipeline = RenderPipeline::new(&html, args.width, args.height);
+        let pipeline = RenderPipeline::with_options(&html, args.width, args.height, render_options);
         let pixmap = pipeline.render(args.width, args.height, 1.0);
         match pixmap.save_png(&path) {
             Ok(()) => println!("[carmine] wrote: {}", path),
@@ -55,12 +65,12 @@ fn main() {
         return;
     }
 
-    run_viewer(html, args.width, args.height);
+    run_viewer(html, args.width, args.height, render_options);
 }
 
 #[cfg(feature = "scarlet")]
-fn run_viewer(html: String, width: u32, height: u32) {
-    let mut app = browser::BrowserApp::new(html, width, height);
+fn run_viewer(html: String, width: u32, height: u32, render_options: RenderOptions) {
+    let mut app = browser::BrowserApp::new(html, width, height, render_options);
     match app.run() {
         Ok(()) => println!("[carmine] exited"),
         Err(e) => println!("[carmine] error: {}", e),
@@ -68,7 +78,7 @@ fn run_viewer(html: String, width: u32, height: u32) {
 }
 
 #[cfg(not(feature = "scarlet"))]
-fn run_viewer(_html: String, _width: u32, _height: u32) {
+fn run_viewer(_html: String, _width: u32, _height: u32, _render_options: RenderOptions) {
     eprintln!(
         "[carmine] interactive viewer requires the `scarlet` feature; use --dump-png for headless rendering"
     );

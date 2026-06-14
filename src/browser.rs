@@ -4,7 +4,7 @@ use scarlet_ui::graphics;
 use scarlet_ui::prelude::*;
 use scarlet_ui::{Application, CanvasView, ComponentElement, Size, Window};
 
-use carmine::render::RenderPipeline;
+use carmine::render::{RenderOptions, RenderPipeline};
 
 use crate::bridge;
 
@@ -15,8 +15,8 @@ pub struct BrowserApp {
 }
 
 impl BrowserApp {
-    pub fn new(html: String, width: u32, height: u32) -> Self {
-        let pipeline = RenderPipeline::new(&html, width, height);
+    pub fn new(html: String, width: u32, height: u32, render_options: RenderOptions) -> Self {
+        let pipeline = RenderPipeline::with_options(&html, width, height, render_options);
         Self {
             pipeline: Rc::new(pipeline),
             width: width as f32,
