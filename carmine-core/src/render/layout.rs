@@ -1500,4 +1500,75 @@ mod tests {
         assert_eq!(width, 30.0);
         assert_eq!(lines, 2);
     }
+
+    #[test]
+    fn inline_fragments_preserve_strong_style_and_punctuation_flow() {
+        let normal = ComputedStyle {
+            font_size: 16.0,
+            ..crate::render::style::default_block_for_test()
+        };
+        let strong = ComputedStyle {
+            font_size: 16.0,
+            font_weight: 700,
+            ..crate::render::style::default_block_for_test()
+        };
+        let runs = vec![
+            InlineTextRun {
+                text: "Confirmed path: ".to_string(),
+                style: normal.clone(),
+            },
+            InlineTextRun {
+                text: "/var/www/html/index.html".to_string(),
+                style: strong,
+            },
+            InlineTextRun {
+                text: ". You are not hitting a host web server.".to_string(),
+                style: normal,
+            },
+        ];
+
+        let fragments = layout_inline_fragments_with_options(
+            &normalize_inline_runs(runs),
+            800.0,
+            true,
+            WhiteSpace::Normal,
+        );
+
+        let rendered = fragments
+            .iter()
+            .map(|f| f.text.as_str())
+            .collect::<String>();
+        assert_eq!(
+            rendered,
+            "Confirmed path: /var/www/html/index.html. You are not hitting a host web server."
+        );
+        assert!(
+            fragments
+                .iter()
+                .any(|fragment| fragment.text == "/var/www/html/index.html"
+                    && fragment.style.font_weight == 700)
+        );
+        assert!(!rendered.contains("html ."));
+    }
+
+    #[test]
+    fn inline_fragments_allow_cjk_line_breaks_without_spaces() {
+        let style = ComputedStyle {
+            font_size: 16.0,
+            ..crate::render::style::default_block_for_test()
+        };
+        let runs = vec![InlineTextRun {
+            text: "あなたがこのページを開いたということですか".to_string(),
+            style,
+        }];
+
+        let fragments = layout_inline_fragments_with_options(
+            &normalize_inline_runs(runs),
+            80.0,
+            true,
+            WhiteSpace::Normal,
+        );
+
+        assert!(fragments.iter().any(|fragment| fragment.y > 0.0));
+    }
 }

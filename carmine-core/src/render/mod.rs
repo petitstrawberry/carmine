@@ -150,3 +150,92 @@ impl RenderPipeline {
         self.cached_key = key;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::render::layout::LayoutNode;
+
+    fn render_layout(html: &str, width: u32, height: u32) -> LayoutNode {
+        let mut pipeline = RenderPipeline::new(html, width, height);
+        pipeline.ensure_pipeline(width, height, 1.0);
+        pipeline.layout_cache.take().expect("layout cache")
+    }
+
+    fn collect_by_tag<'a>(node: &'a LayoutNode, tag: &str, out: &mut Vec<&'a LayoutNode>) {
+        if node.tag.as_deref() == Some(tag) {
+            out.push(node);
+        }
+        for child in &node.children {
+            collect_by_tag(child, tag, out);
+        }
+    }
+
+    fn rendered_text(node: &LayoutNode) -> String {
+        let mut text = String::new();
+        if !node.inline_fragments.is_empty() {
+            for fragment in &node.inline_fragments {
+                text.push_str(&fragment.text);
+            }
+        } else if let Some(ref node_text) = node.text {
+            text.push_str(node_text);
+        }
+        for child in &node.children {
+            text.push_str(&rendered_text(child));
+        }
+        text
+    }
+
+    #[test]
+    fn styled_inline_fragments_preserve_strong_and_punctuation() {
+        let root = render_layout(
+            r#"<!doctype html><style>strong{font-weight:700}</style>
+            <div class="callout">Confirmed path: <strong>/var/www/html/index.html</strong>. You are not hitting a host web server.</div>"#,
+            800,
+            300,
+        );
+        let mut divs = Vec::new();
+        collect_by_tag(&root, "div", &mut divs);
+        let callout = divs.first().expect("callout div");
+
+        let text = callout
+            .inline_fragments
+            .iter()
+            .map(|fragment| fragment.text.as_str())
+            .collect::<String>();
+
+        assert_eq!(
+            text,
+            "Confirmed path: /var/www/html/index.html. You are not hitting a host web server."
+        );
+        assert!(callout.inline_fragments.iter().any(|fragment| {
+            fragment.text == "/var/www/html/index.html" && fragment.style.font_weight >= 700
+        }));
+    }
+
+    #[test]
+    fn pseudo_before_and_list_items_survive_layout() {
+        let root = render_layout(
+            r#"<!doctype html><style>
+            .badge{display:inline-flex;gap:10px}.badge::before{content:"";width:10px;height:10px}
+            ul{padding-left:18px}.list{line-height:1.6}
+            </style>
+            <span class="badge">Scarlet OS web stack</span>
+            <ul class="list"><li>Architecture: RISC-V 64-bit</li><li>Process: httpd</li></ul>"#,
+            800,
+            300,
+        );
+
+        let mut spans = Vec::new();
+        collect_by_tag(&root, "span", &mut spans);
+        let badge = spans.first().expect("badge span");
+        assert!(badge.pseudo_before.is_some());
+        assert_eq!(rendered_text(badge), "Scarlet OS web stack");
+
+        let mut items = Vec::new();
+        collect_by_tag(&root, "li", &mut items);
+        assert_eq!(items.len(), 2);
+        assert_eq!(rendered_text(items[0]), "Architecture: RISC-V 64-bit");
+        assert_eq!(rendered_text(items[1]), "Process: httpd");
+    }
+}

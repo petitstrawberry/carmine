@@ -823,6 +823,11 @@ fn default_block() -> ComputedStyle {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn default_block_for_test() -> ComputedStyle {
+    default_block()
+}
+
 fn default_for_tag(tag: &str, body_margin: f32) -> ComputedStyle {
     let base = default_block();
     match tag {
