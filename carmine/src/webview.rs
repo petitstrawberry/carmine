@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use scarlet_ui::event::{Event, InputEvent, KeyCode, KeyEvent, MouseEvent};
+use scarlet_ui::event::{Event, KeyCode, KeyEvent, MouseEvent};
 use scarlet_ui::graphics;
 use scarlet_ui::prelude::*;
 use scarlet_ui::{CanvasView, ViewExt};
@@ -20,16 +20,6 @@ pub struct WebView {
 }
 
 impl WebView {
-    pub fn new(
-        html: &str,
-        width: u32,
-        height: u32,
-        options: RenderOptions,
-        paint_signal: Rc<PaintSignal>,
-    ) -> Self {
-        Self::with_base(html, width, height, options, paint_signal, "")
-    }
-
     pub fn with_base(
         html: &str,
         width: u32,

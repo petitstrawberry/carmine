@@ -5,7 +5,7 @@ use tiny_skia::{Color as SkColor, Paint, PathBuilder, Pixmap, Rect};
 
 use crate::render::layout::LayoutNode;
 use crate::render::style::{
-    Background, BoxShadow, Color, ComputedStyle, TextAlign, TextDecoration,
+    Background, BoxShadow, Color, ComputedStyle, TextAlign, TextDecoration, Visibility, WhiteSpace,
 };
 
 static FONTS: OnceLock<FontBook> = OnceLock::new();
@@ -114,6 +114,10 @@ fn paint_node(node: &LayoutNode, pixmap: &mut Pixmap, scale: f32) {
         .padding_right
         .resolve_px(node.width, pixmap.width() as f32 / scale)
         * scale;
+
+    if matches!(node.style.visibility, Visibility::Hidden) {
+        return;
+    }
 
     if let Some(ref shadow) = node.style.box_shadow {
         if shadow.blur > 0.0 || shadow.offset_x != 0.0 || shadow.offset_y != 0.0 {
@@ -264,6 +268,7 @@ fn paint_node(node: &LayoutNode, pixmap: &mut Pixmap, scale: f32) {
             node.style.text_align,
             node.style.line_height.resolve_px(node.style.font_size) * scale,
             node.style.text_decoration,
+            node.style.white_space,
         );
     }
 
@@ -326,6 +331,7 @@ fn draw_text(
     text_align: TextAlign,
     line_height_px: f32,
     text_decoration: TextDecoration,
+    white_space: WhiteSpace,
 ) {
     let Some(fonts) = get_fonts() else {
         draw_text_placeholder(pixmap, text, x, y, font_size, color);
@@ -338,39 +344,70 @@ fn draw_text(
     let ph = pixmap.height();
     let space_advance = fonts.h_advance(' ', font_size) + letter_spacing;
 
-    let words: Vec<&str> = text.split(' ').collect();
-    let mut lines: Vec<(f32, Vec<&str>)> = Vec::new();
-    let mut current_line: Vec<&str> = Vec::new();
+    let mut lines: Vec<(f32, String)> = Vec::new();
+    let mut current_line = String::new();
     let mut current_width = 0.0f32;
 
-    for word in &words {
-        let word_width = measure_word_width(fonts, word, font_size, letter_spacing);
-        let sep = if !current_line.is_empty() {
-            space_advance
-        } else {
-            0.0
-        };
+    if matches!(white_space, WhiteSpace::Nowrap) {
+        current_width = measure_word_width(fonts, text, font_size, letter_spacing);
+        current_line.push_str(text);
+    } else if matches!(white_space, WhiteSpace::Pre) {
+        for line in text.split('\n') {
+            lines.push((
+                measure_word_width(fonts, line, font_size, letter_spacing),
+                line.to_string(),
+            ));
+        }
+    } else {
+        for hard_line in text.split('\n') {
+            for word in hard_line.split(' ') {
+                let word_width = measure_word_width(fonts, word, font_size, letter_spacing);
+                let sep = if !current_line.is_empty() {
+                    space_advance
+                } else {
+                    0.0
+                };
 
-        if !current_line.is_empty() && current_width + sep + word_width > max_width {
-            let line_w = current_width;
-            lines.push((line_w, std::mem::take(&mut current_line)));
-            current_width = word_width;
-            current_line.push(word);
-        } else {
-            current_width += sep + word_width;
-            current_line.push(word);
+                if !current_line.is_empty() && current_width + sep + word_width > max_width {
+                    lines.push((current_width, std::mem::take(&mut current_line)));
+                    current_width = 0.0;
+                } else if sep > 0.0 {
+                    current_line.push(' ');
+                    current_width += sep;
+                }
+
+                if word_width > max_width && max_width > font_size {
+                    for ch in word.chars() {
+                        let ch_width = fonts.h_advance(ch, font_size) + letter_spacing;
+                        if !current_line.is_empty() && current_width + ch_width > max_width {
+                            lines.push((current_width, std::mem::take(&mut current_line)));
+                            current_width = 0.0;
+                        }
+                        current_line.push(ch);
+                        current_width += ch_width;
+                    }
+                } else {
+                    current_line.push_str(word);
+                    current_width += word_width;
+                }
+            }
+            lines.push((current_width, std::mem::take(&mut current_line)));
+            current_width = 0.0;
+        }
+        if lines.last().is_some_and(|(_, line)| line.is_empty()) {
+            lines.pop();
         }
     }
     if !current_line.is_empty() {
         lines.push((current_width, current_line));
     }
     if lines.is_empty() {
-        lines.push((0.0, vec![]));
+        lines.push((0.0, String::new()));
     }
 
     let mut pen_y = y + ascent;
 
-    for (line_w, line_words) in &lines {
+    for (line_w, line_text) in &lines {
         let align_offset = match text_align {
             TextAlign::Center => ((max_width - line_w) / 2.0).max(0.0),
             TextAlign::Right => (max_width - line_w).max(0.0),
@@ -378,40 +415,35 @@ fn draw_text(
         };
         let mut pen_x = x + align_offset;
 
-        for (i, word) in line_words.iter().enumerate() {
-            if i > 0 {
-                pen_x += space_advance;
+        for ch in line_text.chars() {
+            let Some(font_idx) = fonts.glyph_font_index(ch, font_size) else {
+                continue;
+            };
+            let scaled = fonts.fonts[font_idx].as_scaled(font_size);
+            let glyph_id = scaled.glyph_id(ch);
+            let advance = scaled.h_advance(glyph_id);
+            let glyph: Glyph = glyph_id.with_scale_and_position(font_size, (pen_x, pen_y));
+            if let Some(outlined) = scaled.outline_glyph(glyph) {
+                let bounds = outlined.px_bounds();
+                let px0 = bounds.min.x;
+                let py0 = bounds.min.y;
+                outlined.draw(|gx: u32, gy: u32, coverage: f32| {
+                    let px = px0 + gx as f32;
+                    let py = py0 + gy as f32;
+                    if px >= 0.0 && py >= 0.0 && px < pw as f32 && py < ph as f32 {
+                        let ix = px as usize;
+                        let iy = py as usize;
+                        let idx = (iy * pw as usize + ix) * 4;
+                        let alpha = (coverage * color.a as f32) as u8;
+                        let pixels = pixmap.data_mut();
+                        pixels[idx] = blend(pixels[idx], color.r, alpha);
+                        pixels[idx + 1] = blend(pixels[idx + 1], color.g, alpha);
+                        pixels[idx + 2] = blend(pixels[idx + 2], color.b, alpha);
+                        pixels[idx + 3] = 255;
+                    }
+                });
             }
-            for ch in word.chars() {
-                let Some(font_idx) = fonts.glyph_font_index(ch, font_size) else {
-                    continue;
-                };
-                let scaled = fonts.fonts[font_idx].as_scaled(font_size);
-                let glyph_id = scaled.glyph_id(ch);
-                let advance = scaled.h_advance(glyph_id);
-                let glyph: Glyph = glyph_id.with_scale_and_position(font_size, (pen_x, pen_y));
-                if let Some(outlined) = scaled.outline_glyph(glyph) {
-                    let bounds = outlined.px_bounds();
-                    let px0 = bounds.min.x;
-                    let py0 = bounds.min.y;
-                    outlined.draw(|gx: u32, gy: u32, coverage: f32| {
-                        let px = px0 + gx as f32;
-                        let py = py0 + gy as f32;
-                        if px >= 0.0 && py >= 0.0 && px < pw as f32 && py < ph as f32 {
-                            let ix = px as usize;
-                            let iy = py as usize;
-                            let idx = (iy * pw as usize + ix) * 4;
-                            let alpha = (coverage * color.a as f32) as u8;
-                            let pixels = pixmap.data_mut();
-                            pixels[idx] = blend(pixels[idx], color.r, alpha);
-                            pixels[idx + 1] = blend(pixels[idx + 1], color.g, alpha);
-                            pixels[idx + 2] = blend(pixels[idx + 2], color.b, alpha);
-                            pixels[idx + 3] = 255;
-                        }
-                    });
-                }
-                pen_x += advance + letter_spacing;
-            }
+            pen_x += advance + letter_spacing;
         }
 
         match text_decoration {

@@ -35,8 +35,17 @@ pub type MatchMap = HashMap<NodeId, Vec<(Declaration, u32)>>;
 pub type PseudoMatchMap = HashMap<NodeId, Vec<(Declaration, u32, PseudoElement)>>;
 
 pub fn parse_css(css: &str) -> Stylesheet {
+    parse_css_for_viewport(css, f32::INFINITY)
+}
+
+pub fn parse_css_for_viewport(css: &str, viewport_width: f32) -> Stylesheet {
     let cleaned = strip_comments(css);
-    let mut input = ParserInput::new(&cleaned);
+    let filtered = expand_matching_media_rules(&cleaned, viewport_width);
+    parse_flat_css(&filtered)
+}
+
+fn parse_flat_css(css: &str) -> Stylesheet {
+    let mut input = ParserInput::new(css);
     let mut parser = CssParser::new(&mut input);
     let mut rules = Vec::new();
     let mut variables: HashMap<String, String> = HashMap::new();
@@ -95,6 +104,107 @@ pub fn parse_css(css: &str) -> Stylesheet {
     }
 
     Stylesheet { rules, variables }
+}
+
+fn expand_matching_media_rules(css: &str, viewport_width: f32) -> String {
+    let mut output = String::with_capacity(css.len());
+    let mut idx = 0usize;
+
+    while idx < css.len() {
+        if css[idx..].starts_with("@media") {
+            let condition_start = idx + "@media".len();
+            let Some(open_rel) = css[condition_start..].find('{') else {
+                break;
+            };
+            let open = condition_start + open_rel;
+            let condition = css[condition_start..open].trim();
+            let Some(close) = find_matching_brace(css, open) else {
+                break;
+            };
+            if media_condition_matches(condition, viewport_width) {
+                output.push_str(&expand_matching_media_rules(
+                    &css[open + 1..close],
+                    viewport_width,
+                ));
+            }
+            idx = close + 1;
+            continue;
+        }
+
+        let Some(ch) = css[idx..].chars().next() else {
+            break;
+        };
+        output.push(ch);
+        idx += ch.len_utf8();
+    }
+
+    output
+}
+
+fn find_matching_brace(css: &str, open: usize) -> Option<usize> {
+    let bytes = css.as_bytes();
+    let mut depth = 0usize;
+    for (idx, byte) in bytes.iter().enumerate().skip(open) {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn media_condition_matches(condition: &str, viewport_width: f32) -> bool {
+    condition
+        .split(',')
+        .any(|part| single_media_condition_matches(part.trim(), viewport_width))
+}
+
+fn single_media_condition_matches(condition: &str, viewport_width: f32) -> bool {
+    let lower = condition.to_ascii_lowercase();
+    if lower.contains("not ") || lower.contains("print") {
+        return false;
+    }
+    if lower.contains("screen") || lower.contains("all") || lower.contains("width") {
+        for clause in lower.split('(').skip(1) {
+            let Some(end) = clause.find(')') else {
+                continue;
+            };
+            let expr = clause[..end].trim();
+            let Some((name, value)) = expr.split_once(':') else {
+                continue;
+            };
+            let Some(px) = parse_media_length(value.trim()) else {
+                continue;
+            };
+            match name.trim() {
+                "max-width" if viewport_width > px => return false,
+                "min-width" if viewport_width < px => return false,
+                _ => {}
+            }
+        }
+        return true;
+    }
+    false
+}
+
+fn parse_media_length(value: &str) -> Option<f32> {
+    let value = value.trim();
+    if let Some(num) = value.strip_suffix("px") {
+        return num.trim().parse().ok();
+    }
+    if let Some(num) = value
+        .strip_suffix("rem")
+        .or_else(|| value.strip_suffix("em"))
+    {
+        return num.trim().parse::<f32>().ok().map(|v| v * 16.0);
+    }
+    value.parse().ok()
 }
 
 pub fn substitute_vars(value: &str, vars: &HashMap<String, String>) -> String {
@@ -351,4 +461,34 @@ pub fn extract_style_text(html: &Html) -> String {
         }
     }
     css
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_css_for_viewport_expands_matching_width_media() {
+        let stylesheet = parse_css_for_viewport(
+            ".wide{display:block}@media screen and (max-width: 56rem){.narrow{display:none}}",
+            800.0,
+        );
+
+        assert_eq!(stylesheet.rules.len(), 2);
+        assert!(stylesheet.rules.iter().any(|rule| {
+            rule.declarations
+                .iter()
+                .any(|decl| decl.property == "display" && decl.value == "none")
+        }));
+    }
+
+    #[test]
+    fn parse_css_for_viewport_skips_non_matching_width_media() {
+        let stylesheet = parse_css_for_viewport(
+            "@media screen and (max-width: 40rem){.narrow{display:none}}",
+            800.0,
+        );
+
+        assert!(stylesheet.rules.is_empty());
+    }
 }

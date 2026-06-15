@@ -18,17 +18,6 @@ pub struct BrowserApp {
 }
 
 impl BrowserApp {
-    pub fn new(html: String, width: u32, height: u32, options: RenderOptions) -> Self {
-        Self {
-            html,
-            width,
-            height,
-            options,
-            paint_signal: Rc::new(PaintSignal::new()),
-            base_path: String::new(),
-        }
-    }
-
     pub fn with_base(
         html: String,
         width: u32,

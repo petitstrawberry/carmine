@@ -17,8 +17,6 @@ mod paint_signal;
 mod resolve;
 
 #[cfg(feature = "scarlet")]
-mod bridge;
-#[cfg(feature = "scarlet")]
 mod browser;
 #[cfg(feature = "scarlet")]
 mod webview;
@@ -73,7 +71,7 @@ fn main() {
             };
             resolve::resolve_external_css(&raw, path)
         }
-        None => DEFAULT_HTML.to_string(),
+        _ => DEFAULT_HTML.to_string(),
     };
 
     let render_options = RenderOptions {

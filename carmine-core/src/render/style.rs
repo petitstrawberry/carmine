@@ -94,6 +94,7 @@ pub enum BoxSizing {
 #[derive(Clone, Debug)]
 pub struct ComputedStyle {
     pub display: Display,
+    pub visibility: Visibility,
     pub font_size: f32,
     pub font_weight: u32,
     pub color: Color,
@@ -110,6 +111,9 @@ pub struct ComputedStyle {
     pub justify_content: JustifyContent,
     pub align_items: AlignItems,
     pub flex_wrap: FlexWrap,
+    pub flex_grow: f32,
+    pub flex_shrink: f32,
+    pub flex_basis: Length,
     pub gap: Length,
     pub border_width: f32,
     pub border_color: Option<Color>,
@@ -126,6 +130,7 @@ pub struct ComputedStyle {
     pub text_align: TextAlign,
     pub text_decoration: TextDecoration,
     pub line_height: LineHeight,
+    pub white_space: WhiteSpace,
     pub border_top_width: f32,
     pub border_top_color: Option<Color>,
     pub border_right_width: f32,
@@ -162,6 +167,14 @@ pub enum LineHeight {
     Normal,
     Number(f32),
     Px(f32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum WhiteSpace {
+    Normal,
+    Nowrap,
+    Pre,
+    PreWrap,
 }
 
 impl LineHeight {
@@ -201,6 +214,12 @@ pub enum Display {
     Grid,
     InlineGrid,
     None,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Visibility {
+    Visible,
+    Hidden,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -411,11 +430,26 @@ fn cascade(
             let css_sets_text_transform = matches.get(&id).map_or(false, |d| {
                 d.iter().any(|(decl, _)| decl.property == "text-transform")
             });
+            let css_sets_visibility =
+                matches.get(&id).map_or(false, |d| {
+                    d.iter().any(|(decl, _)| decl.property == "visibility")
+                }) || el.attr("style").map_or(false, |s| s.contains("visibility"));
+            let mut css_sets_white_space = matches.get(&id).map_or(false, |d| {
+                d.iter()
+                    .any(|(decl, _)| decl.property == "white-space" || decl.property == "text-wrap")
+            }) || el.attr("style").map_or(false, |s| {
+                s.contains("white-space") || s.contains("text-wrap")
+            });
 
             if let Some(inline) = el.attr("style") {
                 let inline_decls = css::parse_declarations(inline);
                 if !css_sets_font_size {
                     css_sets_font_size = inline_decls.iter().any(|d| d.property == "font-size");
+                }
+                if !css_sets_white_space {
+                    css_sets_white_space = inline_decls
+                        .iter()
+                        .any(|d| d.property == "white-space" || d.property == "text-wrap");
                 }
                 for decl in &inline_decls {
                     if decl.property == "font-size" {
@@ -444,6 +478,12 @@ fn cascade(
             }
             if !css_sets_text_transform {
                 style.text_transform = parent.text_transform;
+            }
+            if !css_sets_visibility {
+                style.visibility = parent.visibility;
+            }
+            if !css_sets_white_space {
+                style.white_space = parent.white_space;
             }
 
             resolve_em_lengths(&mut style);
@@ -475,6 +515,13 @@ fn cascade(
                 && matches!(input_type.as_str(), "submit" | "button" | "reset" | "")
                 && !input_value.is_empty();
 
+            if show_input_text && style.width.is_auto() {
+                let text_width = input_value.chars().count() as f32 * style.font_size * 0.65;
+                let horizontal_padding =
+                    style.padding_left.approx_px() + style.padding_right.approx_px();
+                style.width = Length::px((text_width + horizontal_padding + 12.0).max(48.0));
+            }
+
             let mut children = if style.display == Display::None {
                 Vec::new()
             } else {
@@ -493,11 +540,13 @@ fn cascade(
                     kind: StyledKind::Text(input_value),
                     style: ComputedStyle {
                         display: Display::Inline,
+                        visibility: style.visibility,
                         font_size: style.font_size,
                         color: style.color,
                         text_align: style.text_align,
                         text_decoration: style.text_decoration,
                         line_height: style.line_height,
+                        white_space: style.white_space,
                         ..default_block()
                     },
                     pseudo_before: None,
@@ -525,6 +574,7 @@ fn cascade(
         ScraperNode::Text(text) => {
             let inherited = ComputedStyle {
                 display: Display::Inline,
+                visibility: parent.visibility,
                 font_size: parent.font_size,
                 font_weight: parent.font_weight,
                 color: parent.color,
@@ -533,6 +583,7 @@ fn cascade(
                 text_align: parent.text_align,
                 text_decoration: parent.text_decoration,
                 line_height: parent.line_height,
+                white_space: parent.white_space,
                 ..default_block()
             };
             StyledNode {
@@ -576,6 +627,7 @@ fn compute_pseudo_style(
 
     let mut style = ComputedStyle {
         display: Display::Inline,
+        visibility: parent.visibility,
         font_size: parent.font_size,
         font_weight: parent.font_weight,
         color: parent.color,
@@ -584,6 +636,7 @@ fn compute_pseudo_style(
         text_align: parent.text_align,
         text_decoration: parent.text_decoration,
         line_height: parent.line_height,
+        white_space: parent.white_space,
         ..default_block()
     };
 
@@ -657,6 +710,11 @@ fn apply_html_attributes(tag: &str, el: &scraper::node::Element, style: &mut Com
                 }
             }
         }
+        "td" | "th" | "div" | "span" => {
+            if el.attr("nowrap").is_some() {
+                style.white_space = WhiteSpace::Nowrap;
+            }
+        }
         _ => {}
     }
 }
@@ -714,6 +772,7 @@ fn resolve_em_lengths(style: &mut ComputedStyle) {
 fn default_block() -> ComputedStyle {
     ComputedStyle {
         display: Display::Block,
+        visibility: Visibility::Visible,
         font_size: ROOT_FONT_SIZE,
         font_weight: 400,
         color: Color::BLACK,
@@ -730,6 +789,9 @@ fn default_block() -> ComputedStyle {
         justify_content: JustifyContent::Unspecified,
         align_items: AlignItems::Unspecified,
         flex_wrap: FlexWrap::Unspecified,
+        flex_grow: 0.0,
+        flex_shrink: 1.0,
+        flex_basis: Length::Auto,
         gap: Length::Zero,
         border_width: 0.0,
         border_color: None,
@@ -746,6 +808,7 @@ fn default_block() -> ComputedStyle {
         text_align: TextAlign::Start,
         text_decoration: TextDecoration::None,
         line_height: LineHeight::Normal,
+        white_space: WhiteSpace::Normal,
         border_top_width: 0.0,
         border_top_color: None,
         border_right_width: 0.0,
@@ -834,6 +897,7 @@ fn default_for_tag(tag: &str, body_margin: f32) -> ComputedStyle {
         },
         "input" | "button" | "select" | "textarea" => ComputedStyle {
             display: Display::Inline,
+            white_space: WhiteSpace::Nowrap,
             border_width: 1.0,
             border_color: Some(Color {
                 r: 118,
@@ -912,6 +976,28 @@ fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
         "flex-wrap" => {
             style.flex_wrap = parse_flex_wrap(value);
         }
+        "flex-grow" => {
+            if let Ok(v) = value.parse::<f32>() {
+                style.flex_grow = v.max(0.0);
+            }
+        }
+        "flex-shrink" => {
+            if let Ok(v) = value.parse::<f32>() {
+                style.flex_shrink = v.max(0.0);
+            }
+        }
+        "flex-basis" => {
+            style.flex_basis = parse_length_token(value);
+        }
+        "flex" => {
+            parse_flex_shorthand(style, value);
+        }
+        "visibility" => {
+            style.visibility = match value {
+                "hidden" | "collapse" => Visibility::Hidden,
+                _ => Visibility::Visible,
+            };
+        }
         "gap" => {
             style.gap = parse_length_token(value);
         }
@@ -926,6 +1012,10 @@ fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
         "margin-bottom" => style.margin_bottom = parse_length_token(value),
         "margin-left" => style.margin_left = parse_length_token(value),
         "margin-right" => style.margin_right = parse_length_token(value),
+        "margin-inline-start" => style.margin_left = parse_length_token(value),
+        "margin-inline-end" => style.margin_right = parse_length_token(value),
+        "margin-block-start" => style.margin_top = parse_length_token(value),
+        "margin-block-end" => style.margin_bottom = parse_length_token(value),
         "padding" => {
             let parts: Vec<&str> = value.split_whitespace().collect();
             let parse = |s: &str| parse_length_token(s);
@@ -966,6 +1056,10 @@ fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
             style.border_width = w;
             style.border_color = c;
         }
+        "padding-inline-start" => style.padding_left = parse_length_token(value),
+        "padding-inline-end" => style.padding_right = parse_length_token(value),
+        "padding-block-start" => style.padding_top = parse_length_token(value),
+        "padding-block-end" => style.padding_bottom = parse_length_token(value),
         "border-left" => {
             let (w, c) = parse_border_shorthand(value);
             style.border_left_width = w;
@@ -1044,6 +1138,14 @@ fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
         }
         "line-height" => {
             style.line_height = parse_line_height(value);
+        }
+        "white-space" | "text-wrap" => {
+            style.white_space = match value.trim() {
+                "nowrap" => WhiteSpace::Nowrap,
+                "pre" => WhiteSpace::Pre,
+                "pre-wrap" => WhiteSpace::PreWrap,
+                _ => WhiteSpace::Normal,
+            };
         }
         "border-top" => {
             let (w, c) = parse_border_shorthand(value);
@@ -1523,6 +1625,62 @@ fn parse_flex_wrap(value: &str) -> FlexWrap {
     }
 }
 
+fn parse_flex_shorthand(style: &mut ComputedStyle, value: &str) {
+    let value = value.trim();
+    match value {
+        "auto" => {
+            style.flex_grow = 1.0;
+            style.flex_shrink = 1.0;
+            style.flex_basis = Length::Auto;
+            return;
+        }
+        "none" => {
+            style.flex_grow = 0.0;
+            style.flex_shrink = 0.0;
+            style.flex_basis = Length::Auto;
+            return;
+        }
+        _ => {}
+    }
+
+    let parts: Vec<&str> = value.split_whitespace().collect();
+    if parts.is_empty() {
+        return;
+    }
+
+    if parts.len() == 1 {
+        if let Ok(grow) = parts[0].parse::<f32>() {
+            style.flex_grow = grow.max(0.0);
+            style.flex_shrink = 1.0;
+            style.flex_basis = Length::Zero;
+        } else {
+            style.flex_basis = parse_length_token(parts[0]);
+        }
+        return;
+    }
+
+    if let Ok(grow) = parts[0].parse::<f32>() {
+        style.flex_grow = grow.max(0.0);
+    }
+
+    if parts.len() == 2 {
+        if let Ok(shrink) = parts[1].parse::<f32>() {
+            style.flex_shrink = shrink.max(0.0);
+        } else {
+            style.flex_shrink = 1.0;
+            style.flex_basis = parse_length_token(parts[1]);
+        }
+        return;
+    }
+
+    if let Ok(shrink) = parts[1].parse::<f32>() {
+        style.flex_shrink = shrink.max(0.0);
+    }
+    if let Some(basis) = parts.get(2) {
+        style.flex_basis = parse_length_token(basis);
+    }
+}
+
 fn parse_border_shorthand(value: &str) -> (f32, Option<Color>) {
     let mut width = 0.0;
     let mut color = None;
@@ -1644,5 +1802,45 @@ fn parse_margin_shorthand(value: &str) -> (Length, Length, Length, Length) {
             (t, b, l, r)
         }
         _ => (Length::Zero, Length::Zero, Length::Zero, Length::Zero),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flex_shorthand_two_values_can_set_basis() {
+        let mut style = default_block();
+        parse_flex_shorthand(&mut style, "1 20px");
+
+        assert_eq!(style.flex_grow, 1.0);
+        assert_eq!(style.flex_shrink, 1.0);
+        assert_eq!(style.flex_basis, Length::Px(20.0));
+    }
+
+    #[test]
+    fn flex_shorthand_three_values_sets_grow_shrink_basis() {
+        let mut style = default_block();
+        parse_flex_shorthand(&mut style, "0 0 16rem");
+
+        assert_eq!(style.flex_grow, 0.0);
+        assert_eq!(style.flex_shrink, 0.0);
+        assert_eq!(style.flex_basis.approx_px(), 256.0);
+    }
+
+    #[test]
+    fn visibility_hidden_does_not_change_display() {
+        let mut style = default_block();
+        let decl = Declaration {
+            property: "visibility".to_string(),
+            value: "hidden".to_string(),
+            important: false,
+        };
+
+        apply_declaration(&mut style, &decl);
+
+        assert_eq!(style.display, Display::Block);
+        assert_eq!(style.visibility, Visibility::Hidden);
     }
 }

@@ -7,7 +7,7 @@ use taffy::{NodeId, TaffyTree};
 
 use crate::render::style::{
     AlignItems, BoxSizing, ComputedStyle, Display as StyleDisplay, FlexDirection as StyleFlexDir,
-    FlexWrap as StyleFlexWrap, JustifyContent, Length, StyledKind, StyledNode,
+    FlexWrap as StyleFlexWrap, JustifyContent, Length, StyledKind, StyledNode, WhiteSpace,
 };
 
 pub struct LayoutNode {
@@ -44,6 +44,7 @@ struct TextMeasureData {
     text: String,
     font_size: f32,
     line_height_px: f32,
+    white_space: WhiteSpace,
 }
 
 struct TaffyLink<'a> {
@@ -81,6 +82,7 @@ pub fn layout_with_images(
                 &data.text,
                 data.font_size,
                 data.line_height_px,
+                data.white_space,
                 known,
                 avail,
             ),
@@ -177,13 +179,6 @@ fn build_taffy_tree_inner<'a>(
     let has_element_children = visible_children
         .iter()
         .any(|c| matches!(c.kind, StyledKind::Element { .. }));
-    let is_flex_or_grid_container = matches!(
-        node.style.display,
-        StyleDisplay::Flex
-            | StyleDisplay::InlineFlex
-            | StyleDisplay::Grid
-            | StyleDisplay::InlineGrid
-    );
     let should_collapse_inline_text =
         !has_block_children && !has_element_children && !visible_children.is_empty();
 
@@ -193,12 +188,13 @@ fn build_taffy_tree_inner<'a>(
     );
 
     if should_collapse_inline_text {
-        let text = collapse_html_whitespace(&collect_inline_text(node));
+        let text = normalize_html_text(&collect_inline_text(node), node.style.white_space);
         if !text.trim().is_empty() {
             let ctx = TextMeasureData {
                 text: text.clone(),
                 font_size: node.style.font_size,
                 line_height_px: node.style.line_height.resolve_px(node.style.font_size),
+                white_space: node.style.white_space,
             };
             let mut style = to_taffy_style_for_node(node, vw, vh, node_content_width);
             if parent_stretches && matches!(node.style.display, StyleDisplay::Inline) {
@@ -223,11 +219,12 @@ fn build_taffy_tree_inner<'a>(
         }
         let id = match &node.kind {
             StyledKind::Text(text) => {
-                let text = collapse_html_whitespace(text);
+                let text = normalize_html_text(text, node.style.white_space);
                 let ctx = TextMeasureData {
                     text,
                     font_size: node.style.font_size,
                     line_height_px: node.style.line_height.resolve_px(node.style.font_size),
+                    white_space: node.style.white_space,
                 };
                 tree.new_leaf_with_context(leaf_style, ctx)
                     .expect("taffy new_leaf_with_context")
@@ -465,6 +462,13 @@ fn collapse_html_whitespace(text: &str) -> String {
     result
 }
 
+fn normalize_html_text(text: &str, white_space: WhiteSpace) -> String {
+    match white_space {
+        WhiteSpace::Normal | WhiteSpace::Nowrap => collapse_html_whitespace(text),
+        WhiteSpace::Pre | WhiteSpace::PreWrap => text.to_string(),
+    }
+}
+
 fn extract(
     link: &TaffyLink,
     tree: &TaffyTree<TextMeasureData>,
@@ -479,7 +483,7 @@ fn extract(
         Some(t.clone())
     } else {
         match &link.styled.kind {
-            StyledKind::Text(t) => Some(collapse_html_whitespace(t)),
+            StyledKind::Text(t) => Some(normalize_html_text(t, link.styled.style.white_space)),
             _ => None,
         }
     };
@@ -547,6 +551,8 @@ fn to_taffy_style(s: &ComputedStyle, vw: f32, vh: f32) -> TaffyStyle {
         StyleFlexDir::Unspecified => {
             if matches!(s.display, StyleDisplay::Flex | StyleDisplay::InlineFlex) {
                 FlexDirection::Row
+            } else if matches!(s.display, StyleDisplay::Inline) {
+                FlexDirection::Row
             } else {
                 FlexDirection::Column
             }
@@ -587,6 +593,9 @@ fn to_taffy_style(s: &ComputedStyle, vw: f32, vh: f32) -> TaffyStyle {
         display,
         flex_direction,
         flex_wrap,
+        flex_grow: s.flex_grow,
+        flex_shrink: s.flex_shrink,
+        flex_basis: length_to_dim(s.flex_basis, vw, vh),
         justify_content: Some(justify_content),
         align_items: Some(align_items),
         align_self,
@@ -966,6 +975,7 @@ fn measure_text(
     text: &str,
     font_size: f32,
     line_height_px: f32,
+    white_space: WhiteSpace,
     known: Size<Option<f32>>,
     available: Size<AvailableSpace>,
 ) -> Size<f32> {
@@ -976,11 +986,37 @@ fn measure_text(
         _ => f32::MAX,
     };
 
-    let (natural_width, line_count) = measure_wrapped_text(text, char_width, avail_width);
+    let (natural_width, line_count) = match white_space {
+        WhiteSpace::Nowrap => (text.chars().count() as f32 * char_width, 1),
+        WhiteSpace::Pre => measure_pre_text(text, char_width),
+        WhiteSpace::PreWrap => measure_pre_wrap_text(text, char_width, avail_width),
+        WhiteSpace::Normal => measure_wrapped_text(text, char_width, avail_width),
+    };
     let width = known.width.unwrap_or(natural_width.max(char_width));
     let height = known.height.unwrap_or(line_height_px * line_count as f32);
 
     Size { width, height }
+}
+
+fn measure_pre_text(text: &str, char_width: f32) -> (f32, usize) {
+    let mut max_width = 0.0f32;
+    let mut lines = 0usize;
+    for line in text.split('\n') {
+        lines += 1;
+        max_width = max_width.max(line.chars().count() as f32 * char_width);
+    }
+    (max_width, lines.max(1))
+}
+
+fn measure_pre_wrap_text(text: &str, char_width: f32, max_width: f32) -> (f32, usize) {
+    let mut natural_width = 0.0f32;
+    let mut line_count = 0usize;
+    for line in text.split('\n') {
+        let (width, lines) = measure_wrapped_text(line, char_width, max_width);
+        natural_width = natural_width.max(width);
+        line_count += lines;
+    }
+    (natural_width, line_count.max(1))
 }
 
 fn measure_wrapped_text(text: &str, char_width: f32, max_width: f32) -> (f32, usize) {
@@ -1050,5 +1086,31 @@ mod tests {
             auto_fit_repeat_count(&tracks, Some(3), Some(180.0), 18.0),
             Some(1)
         );
+    }
+
+    #[test]
+    fn nowrap_measurement_keeps_text_on_one_line() {
+        let size = measure_text(
+            "Google 検索",
+            16.0,
+            20.0,
+            WhiteSpace::Nowrap,
+            Size::NONE,
+            Size {
+                width: AvailableSpace::Definite(30.0),
+                height: AvailableSpace::MaxContent,
+            },
+        );
+
+        assert_eq!(size.height, 20.0);
+        assert!(size.width > 30.0);
+    }
+
+    #[test]
+    fn pre_measurement_preserves_hard_lines() {
+        let (width, lines) = measure_pre_text("abc\ndef", 10.0);
+
+        assert_eq!(width, 30.0);
+        assert_eq!(lines, 2);
     }
 }

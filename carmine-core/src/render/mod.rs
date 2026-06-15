@@ -8,6 +8,7 @@ use tiny_skia::Pixmap;
 
 pub struct RenderPipeline {
     html: Html,
+    css_text: String,
     matches: css::MatchMap,
     pseudo_matches: css::PseudoMatchMap,
     options: RenderOptions,
@@ -38,19 +39,15 @@ impl RenderPipeline {
         Self::with_options(html_text, width, height, RenderOptions::default())
     }
 
-    pub fn with_options(
-        html_text: &str,
-        _width: u32,
-        _height: u32,
-        options: RenderOptions,
-    ) -> Self {
+    pub fn with_options(html_text: &str, width: u32, _height: u32, options: RenderOptions) -> Self {
         let html = Html::parse_document(html_text);
         let css_text = css::extract_style_text(&html);
-        let stylesheet = css::parse_css(&css_text);
+        let stylesheet = css::parse_css_for_viewport(&css_text, width as f32);
         let matches = css::compute_matches(&html, &stylesheet);
         let pseudo_matches = css::compute_pseudo_matches(&html, &stylesheet);
         Self {
             html,
+            css_text,
             matches,
             pseudo_matches,
             options,
@@ -113,6 +110,11 @@ impl RenderPipeline {
         }
 
         if self.style_cache.is_none() || self.cached_key.logical_w != logical_w {
+            if self.cached_key.logical_w != logical_w {
+                let stylesheet = css::parse_css_for_viewport(&self.css_text, logical_w as f32);
+                self.matches = css::compute_matches(&self.html, &stylesheet);
+                self.pseudo_matches = css::compute_pseudo_matches(&self.html, &stylesheet);
+            }
             self.style_cache = Some(style::compute_styles(
                 &self.html,
                 &self.matches,

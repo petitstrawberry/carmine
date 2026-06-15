@@ -128,17 +128,6 @@ pub fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
     with_backend(|backend| backend.fetch_bytes(url))
 }
 
-pub fn set_http_backend<B>(backend: B) -> Result<(), String>
-where
-    B: HttpBackend + 'static,
-{
-    let mut slot = backend_slot()
-        .lock()
-        .map_err(|_| "http backend lock poisoned".to_string())?;
-    *slot = Box::new(backend);
-    Ok(())
-}
-
 fn with_backend<T>(f: impl FnOnce(&dyn HttpBackend) -> Result<T, String>) -> Result<T, String> {
     let slot = backend_slot()
         .lock()
