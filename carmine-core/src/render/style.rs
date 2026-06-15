@@ -725,6 +725,14 @@ fn apply_html_attributes(tag: &str, el: &scraper::node::Element, style: &mut Com
             if let Some(rowspan) = el.attr("rowspan").and_then(parse_span_value) {
                 style.table_rowspan = rowspan;
             }
+            if let Some(align) = el.attr("align") {
+                style.text_align = match align.trim().to_ascii_lowercase().as_str() {
+                    "center" | "middle" => TextAlign::Center,
+                    "right" => TextAlign::Right,
+                    "left" => TextAlign::Left,
+                    _ => style.text_align,
+                };
+            }
             if el.attr("nowrap").is_some() {
                 style.white_space = WhiteSpace::Nowrap;
             }
@@ -986,6 +994,7 @@ fn default_for_tag(tag: &str, body_margin: f32) -> ComputedStyle {
             padding_right: Length::px(6.0),
             background_color: Some(Background::Solid(Color::WHITE)),
             height: Length::px(20.0),
+            box_sizing: BoxSizing::BorderBox,
             ..base
         },
         "table" => ComputedStyle {
@@ -1027,8 +1036,35 @@ fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
                 style.color = c;
             }
         }
-        "background-color" | "background" => {
+        "background-color" => {
             style.background_color = parse_background(value);
+        }
+        "background-image" => {
+            style.background_image_src = parse_background_image_url(value);
+        }
+        "background-repeat" => {
+            if let Some((rx, ry)) = parse_background_repeat(value) {
+                style.background_repeat_x = rx;
+                style.background_repeat_y = ry;
+            }
+        }
+        "background-position" => {
+            if let Some((px, py)) = parse_background_position(value) {
+                style.background_position_x = px;
+                style.background_position_y = py;
+            }
+        }
+        "background" => {
+            if let Some(result) = parse_background_shorthand(value) {
+                style.background_color = result.color;
+                style.background_image_src = result.image_src;
+                style.background_repeat_x = result.repeat_x;
+                style.background_repeat_y = result.repeat_y;
+                style.background_position_x = result.position_x;
+                style.background_position_y = result.position_y;
+            } else {
+                style.background_color = parse_background(value);
+            }
         }
         "font-size" => {}
         "font-weight" => {
@@ -1404,6 +1440,192 @@ fn parse_background(value: &str) -> Option<Background> {
     }
 
     parse_single_background(value)
+}
+
+struct BackgroundShorthandResult {
+    color: Option<Background>,
+    image_src: Option<String>,
+    repeat_x: bool,
+    repeat_y: bool,
+    position_x: BackgroundPositionAxis,
+    position_y: BackgroundPositionAxis,
+}
+
+fn parse_background_image_url(value: &str) -> Option<String> {
+    if value.trim().eq_ignore_ascii_case("none") {
+        return None;
+    }
+    let inner = extract_css_function(value.trim(), "url")?;
+    let src = inner.trim().trim_matches(|ch| ch == '"' || ch == '\'');
+    if src.is_empty() {
+        None
+    } else {
+        Some(src.to_string())
+    }
+}
+
+fn parse_background_repeat(value: &str) -> Option<(bool, bool)> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "repeat" => Some((true, true)),
+        "repeat-x" => Some((true, false)),
+        "repeat-y" => Some((false, true)),
+        "no-repeat" => Some((false, false)),
+        _ => None,
+    }
+}
+
+fn parse_background_position(
+    value: &str,
+) -> Option<(BackgroundPositionAxis, BackgroundPositionAxis)> {
+    let tokens: Vec<&str> = value.split_whitespace().collect();
+    parse_position_tokens(&tokens)
+}
+
+fn parse_background_shorthand(value: &str) -> Option<BackgroundShorthandResult> {
+    if value.contains(',') || contains_top_level_slash(value) {
+        return None;
+    }
+
+    let mut color = None;
+    let mut image_src = None;
+    let mut repeat_x = true;
+    let mut repeat_y = true;
+    let mut position_tokens: Vec<String> = Vec::new();
+    let mut saw_repeat = false;
+
+    for token in split_css_tokens(value) {
+        if token.starts_with("url(") {
+            image_src = parse_background_image_url(&token);
+            continue;
+        }
+
+        if token.eq_ignore_ascii_case("scroll")
+            || token.eq_ignore_ascii_case("fixed")
+            || token.eq_ignore_ascii_case("local")
+            || token.eq_ignore_ascii_case("cover")
+            || token.eq_ignore_ascii_case("contain")
+            || token.eq_ignore_ascii_case("border-box")
+            || token.eq_ignore_ascii_case("padding-box")
+            || token.eq_ignore_ascii_case("content-box")
+        {
+            return None;
+        }
+
+        if color.is_none() {
+            if let Some(bg) = parse_background(&token) {
+                color = Some(bg);
+                continue;
+            }
+        }
+
+        if !saw_repeat {
+            if let Some((rx, ry)) = parse_background_repeat(&token) {
+                repeat_x = rx;
+                repeat_y = ry;
+                saw_repeat = true;
+                continue;
+            }
+        }
+
+        position_tokens.push(token);
+    }
+
+    let (position_x, position_y) = if position_tokens.is_empty() {
+        (
+            BackgroundPositionAxis::Start(Length::Zero),
+            BackgroundPositionAxis::Start(Length::Zero),
+        )
+    } else {
+        let refs = position_tokens
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        parse_position_tokens(&refs)?
+    };
+
+    Some(BackgroundShorthandResult {
+        color,
+        image_src,
+        repeat_x,
+        repeat_y,
+        position_x,
+        position_y,
+    })
+}
+
+fn contains_top_level_slash(value: &str) -> bool {
+    let mut depth = 0usize;
+    for ch in value.chars() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            '/' if depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn parse_position_tokens(
+    tokens: &[&str],
+) -> Option<(BackgroundPositionAxis, BackgroundPositionAxis)> {
+    match tokens {
+        [] => Some((
+            BackgroundPositionAxis::Start(Length::Zero),
+            BackgroundPositionAxis::Start(Length::Zero),
+        )),
+        [one] => parse_horizontal_pos(one)
+            .map(|x| (x, BackgroundPositionAxis::Center(Length::Zero)))
+            .or_else(|| {
+                parse_vertical_pos(one).map(|y| (BackgroundPositionAxis::Center(Length::Zero), y))
+            })
+            .or_else(|| {
+                parse_pos_length(one).map(|pos| (pos, BackgroundPositionAxis::Center(Length::Zero)))
+            }),
+        [first, second] => {
+            let x = parse_horizontal_pos(first).or_else(|| parse_pos_length(first))?;
+            let y = parse_vertical_pos(second).or_else(|| parse_pos_length(second))?;
+            Some((x, y))
+        }
+        _ => None,
+    }
+}
+
+fn parse_horizontal_pos(token: &str) -> Option<BackgroundPositionAxis> {
+    match token.to_ascii_lowercase().as_str() {
+        "left" => Some(BackgroundPositionAxis::Start(Length::Zero)),
+        "center" => Some(BackgroundPositionAxis::Center(Length::Zero)),
+        "right" => Some(BackgroundPositionAxis::End(Length::Zero)),
+        _ => None,
+    }
+}
+
+fn parse_vertical_pos(token: &str) -> Option<BackgroundPositionAxis> {
+    match token.to_ascii_lowercase().as_str() {
+        "top" => Some(BackgroundPositionAxis::Start(Length::Zero)),
+        "center" => Some(BackgroundPositionAxis::Center(Length::Zero)),
+        "bottom" => Some(BackgroundPositionAxis::End(Length::Zero)),
+        _ => None,
+    }
+}
+
+fn parse_pos_length(token: &str) -> Option<BackgroundPositionAxis> {
+    if token == "0" || token == "0px" || token == "0%" {
+        return Some(BackgroundPositionAxis::Start(Length::Zero));
+    }
+    let trimmed = token.trim();
+    if let Some(v) = trimmed.strip_suffix('%') {
+        let pct = v.trim().parse::<f32>().ok()?;
+        return Some(BackgroundPositionAxis::Start(Length::Percent(pct / 100.0)));
+    }
+    if let Some(v) = trimmed.strip_suffix("px") {
+        let px = v.trim().parse::<f32>().ok()?;
+        return Some(BackgroundPositionAxis::Start(Length::Px(px)));
+    }
+    if let Ok(px) = trimmed.parse::<f32>() {
+        return Some(BackgroundPositionAxis::Start(Length::Px(px)));
+    }
+    None
 }
 
 fn parse_single_background(value: &str) -> Option<Background> {
