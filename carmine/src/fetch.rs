@@ -1,6 +1,8 @@
 use std::io::Read;
 use std::sync::{Mutex, OnceLock};
 
+use encoding_rs::{Encoding, UTF_8, UTF_16BE, UTF_16LE, WINDOWS_1252};
+
 #[cfg(target_os = "scarlet")]
 use std::io::{self, Write};
 
@@ -160,8 +162,13 @@ impl HttpBackend for UreqBackend {
             .set("Accept", "text/html,*/*;q=0.8")
             .call()
             .map_err(|e| format!("request failed: {}", e))?;
+        let content_type = resp.header("Content-Type").map(str::to_string);
 
-        resp.into_string().map_err(|e| format!("read body: {}", e))
+        let mut buf = Vec::new();
+        resp.into_reader()
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("read body: {}", e))?;
+        decode_html_bytes(&buf, content_type.as_deref())
     }
 
     fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>, String> {
@@ -182,17 +189,18 @@ impl HttpBackend for UreqBackend {
 #[cfg(target_os = "scarlet")]
 impl HttpBackend for ScarletBackend {
     fn fetch_text(&self, url: &str) -> Result<String, String> {
-        let bytes = self.fetch_bytes(url)?;
-        String::from_utf8(bytes).map_err(|e| format!("decode body: {}", e))
+        let response = fetch_with_scarlet_socket_response(url)?;
+        let content_type = header_value(&response.headers, "content-type");
+        decode_html_bytes(&response.body, content_type.as_deref())
     }
 
     fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>, String> {
-        fetch_with_scarlet_socket(url)
+        fetch_with_scarlet_socket_response(url).map(|response| response.body)
     }
 }
 
 #[cfg(target_os = "scarlet")]
-fn fetch_with_scarlet_socket(url: &str) -> Result<Vec<u8>, String> {
+fn fetch_with_scarlet_socket_response(url: &str) -> Result<HttpResponse, String> {
     fetch_with_scarlet_socket_redirects(url, 0)
 }
 
@@ -200,7 +208,7 @@ fn fetch_with_scarlet_socket(url: &str) -> Result<Vec<u8>, String> {
 fn fetch_with_scarlet_socket_redirects(
     url: &str,
     redirect_count: usize,
-) -> Result<Vec<u8>, String> {
+) -> Result<HttpResponse, String> {
     if redirect_count > MAX_REDIRECTS {
         return Err("too many redirects".to_string());
     }
@@ -240,7 +248,90 @@ fn fetch_with_scarlet_socket_redirects(
         return Err(format!("HTTP request failed: {}", response.status_code));
     }
 
-    Ok(response.body)
+    Ok(response)
+}
+
+fn decode_html_bytes(bytes: &[u8], content_type: Option<&str>) -> Result<String, String> {
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return decode_with_encoding(UTF_8, &bytes[3..]);
+    }
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        return decode_with_encoding(UTF_16LE, &bytes[2..]);
+    }
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        return decode_with_encoding(UTF_16BE, &bytes[2..]);
+    }
+
+    let encoding = content_type
+        .and_then(charset_from_content_type)
+        .or_else(|| charset_from_meta(bytes))
+        .and_then(|label| Encoding::for_label(label.as_bytes()))
+        .unwrap_or(WINDOWS_1252);
+
+    decode_with_encoding(encoding, bytes)
+}
+
+fn decode_with_encoding(encoding: &'static Encoding, bytes: &[u8]) -> Result<String, String> {
+    let (text, _, had_errors) = encoding.decode(bytes);
+    if had_errors && encoding == UTF_8 {
+        return Err("decode body: invalid UTF-8".to_string());
+    }
+    Ok(text.into_owned())
+}
+
+fn charset_from_content_type(content_type: &str) -> Option<String> {
+    content_type
+        .split(';')
+        .find_map(|part| {
+            let part = part.trim();
+            let (name, value) = part.split_once('=')?;
+            if name.trim().eq_ignore_ascii_case("charset") {
+                Some(value)
+            } else {
+                None
+            }
+        })
+        .map(clean_charset_label)
+        .filter(|label| !label.is_empty())
+}
+
+fn charset_from_meta(bytes: &[u8]) -> Option<String> {
+    let limit = bytes.len().min(4096);
+    let head = ascii_lowercase(&bytes[..limit]);
+    if let Some(pos) = head.find("charset=") {
+        return read_charset_after(&head[pos + "charset=".len()..]);
+    }
+    None
+}
+
+fn ascii_lowercase(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| {
+            if byte.is_ascii() {
+                (*byte as char).to_ascii_lowercase()
+            } else {
+                ' '
+            }
+        })
+        .collect()
+}
+
+fn read_charset_after(input: &str) -> Option<String> {
+    let trimmed = input.trim_start_matches(|ch: char| ch == ' ' || ch == '\'' || ch == '"');
+    let label: String = trimmed
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+        .collect();
+    let label = clean_charset_label(&label);
+    if label.is_empty() { None } else { Some(label) }
+}
+
+fn clean_charset_label(label: &str) -> String {
+    label
+        .trim()
+        .trim_matches(|ch| ch == '"' || ch == '\'')
+        .to_ascii_lowercase()
 }
 
 #[cfg(target_os = "scarlet")]
