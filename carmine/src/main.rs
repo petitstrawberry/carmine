@@ -10,6 +10,9 @@ use clap::Parser;
 use scarlet_ui::Application;
 
 mod fetch;
+#[cfg(feature = "scarlet")]
+mod getrandom_scarlet;
+#[cfg(feature = "scarlet")]
 mod paint_signal;
 mod resolve;
 
@@ -77,6 +80,8 @@ fn main() {
         body_margin: args.body_margin,
     };
 
+    let base_path = args.file.clone().unwrap_or_default();
+
     if let Some(path) = args.dump_png {
         let mut pipeline =
             RenderPipeline::with_options(&html, args.width, args.height, render_options);
@@ -88,12 +93,18 @@ fn main() {
         return;
     }
 
-    run_viewer(html, args.width, args.height, render_options);
+    run_viewer(html, args.width, args.height, render_options, base_path);
 }
 
 #[cfg(feature = "scarlet")]
-fn run_viewer(html: String, width: u32, height: u32, render_options: RenderOptions) {
-    let mut app = browser::BrowserApp::new(html, width, height, render_options);
+fn run_viewer(
+    html: String,
+    width: u32,
+    height: u32,
+    render_options: RenderOptions,
+    base_path: String,
+) {
+    let mut app = browser::BrowserApp::with_base(html, width, height, render_options, base_path);
     match app.run() {
         Ok(()) => println!("[carmine] exited"),
         Err(e) => println!("[carmine] error: {}", e),
@@ -101,7 +112,13 @@ fn run_viewer(html: String, width: u32, height: u32, render_options: RenderOptio
 }
 
 #[cfg(not(feature = "scarlet"))]
-fn run_viewer(_html: String, _width: u32, _height: u32, _render_options: RenderOptions) {
+fn run_viewer(
+    _html: String,
+    _width: u32,
+    _height: u32,
+    _render_options: RenderOptions,
+    _base_path: String,
+) {
     eprintln!(
         "[carmine] interactive viewer requires the `scarlet` feature; use --dump-png for headless rendering"
     );

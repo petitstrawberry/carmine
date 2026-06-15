@@ -14,6 +14,7 @@ pub struct BrowserApp {
     height: u32,
     options: RenderOptions,
     paint_signal: Rc<PaintSignal>,
+    base_path: String,
 }
 
 impl BrowserApp {
@@ -24,6 +25,24 @@ impl BrowserApp {
             height,
             options,
             paint_signal: Rc::new(PaintSignal::new()),
+            base_path: String::new(),
+        }
+    }
+
+    pub fn with_base(
+        html: String,
+        width: u32,
+        height: u32,
+        options: RenderOptions,
+        base_path: String,
+    ) -> Self {
+        Self {
+            html,
+            width,
+            height,
+            options,
+            paint_signal: Rc::new(PaintSignal::new()),
+            base_path,
         }
     }
 }
@@ -36,6 +55,7 @@ impl Clone for BrowserApp {
             height: self.height,
             options: self.options,
             paint_signal: Rc::clone(&self.paint_signal),
+            base_path: self.base_path.clone(),
         }
     }
 }
@@ -56,12 +76,13 @@ impl View for BrowserApp {
 
 impl Application for BrowserApp {
     fn body(&self) -> impl View {
-        let webview = WebView::new(
+        let webview = WebView::with_base(
             &self.html,
             self.width,
             self.height,
             self.options,
             Rc::clone(&self.paint_signal),
+            &self.base_path,
         );
         Window::new("Carmine", webview)
             .app_id("org.scarlet-os.carmine")

@@ -27,7 +27,27 @@ impl WebView {
         options: RenderOptions,
         paint_signal: Rc<PaintSignal>,
     ) -> Self {
-        let pipeline = RenderPipeline::with_options(html, width, height, options);
+        Self::with_base(html, width, height, options, paint_signal, "")
+    }
+
+    pub fn with_base(
+        html: &str,
+        width: u32,
+        height: u32,
+        options: RenderOptions,
+        paint_signal: Rc<PaintSignal>,
+        base_path: &str,
+    ) -> Self {
+        let base = base_path.to_string();
+        let mut pipeline = RenderPipeline::with_options(html, width, height, options);
+        pipeline.set_image_loader(move |src: &str| {
+            let resolved = crate::resolve::resolve_href_public(src, &base);
+            if resolved.starts_with("http://") || resolved.starts_with("https://") {
+                crate::fetch::fetch_bytes(&resolved).ok()
+            } else {
+                std::fs::read(&resolved).ok()
+            }
+        });
         Self {
             pipeline: Rc::new(RefCell::new(pipeline)),
             scroll_y: Rc::new(RefCell::new(0.0)),

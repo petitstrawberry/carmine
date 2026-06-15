@@ -57,16 +57,24 @@ fn collect_link_hrefs(node: &NodeRef<ScraperNode>, out: &mut Vec<String>) {
 }
 
 fn resolve_href(href: &str, base_path: &str) -> String {
-    if href.starts_with("http://") || href.starts_with("https://") || href.starts_with('/') {
+    resolve_href_public(href, base_path)
+}
+
+pub fn resolve_href_public(href: &str, base_path: &str) -> String {
+    if href.starts_with("http://") || href.starts_with("https://") {
         return href.to_string();
     }
 
-    if base_path.starts_with("http") {
+    if base_path.starts_with("http://") || base_path.starts_with("https://") {
         if let Ok(base) = url::Url::parse(base_path) {
             if let Ok(resolved) = base.join(href) {
                 return resolved.to_string();
             }
         }
+    }
+
+    if href.starts_with('/') {
+        return href.to_string();
     }
 
     if let Some(slash) = base_path.rfind('/') {
