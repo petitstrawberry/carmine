@@ -84,7 +84,7 @@ fn resolve_frames(html_text: &str, base_path: &str, depth: usize) -> String {
                 resolve_external_css(&resolve_frames(&child, &resolved, depth + 1), &resolved);
             let replacement = format!(
                 "<div class=\"carmine-iframe\" style=\"display:block;border:2px inset #ddd;overflow:auto;\">{}</div>",
-                extract_body_like(&child)
+                frame_document_markup(&child)
             );
             expanded = replace_first_iframe(&expanded, &replacement).unwrap_or(expanded);
         }
@@ -173,7 +173,7 @@ fn expand_frameset(frameset: &FramesetSpec, base_path: &str, depth: usize) -> St
         body.push_str(&format!(
             "<div class=\"carmine-frame\" style=\"flex:0 0 {:.4}%;height:100%;overflow:auto;border-right:1px solid #888;\">{}</div>",
             basis * 100.0,
-            extract_body_like(&child)
+            frame_document_markup(&child)
         ));
     }
     body.push_str("</div>");
@@ -225,6 +225,54 @@ fn extract_body_like(html: &str) -> String {
         }
     }
     html.to_string()
+}
+
+fn frame_document_markup(html: &str) -> String {
+    let attrs = body_presentational_attrs(html);
+    format!(
+        "<div class=\"carmine-frame-document\"{}>{}</div>",
+        attrs,
+        extract_body_like(html)
+    )
+}
+
+fn body_presentational_attrs(html: &str) -> String {
+    let document = Html::parse_document(html);
+    let root = document.tree.root();
+    collect_body_presentational_attrs(&root).unwrap_or_default()
+}
+
+fn collect_body_presentational_attrs(node: &NodeRef<ScraperNode>) -> Option<String> {
+    if let ScraperNode::Element(el) = node.value() {
+        if el.name().eq_ignore_ascii_case("body") {
+            let mut attrs = String::new();
+            if let Some(background) = el.attr("background") {
+                attrs.push_str(" background=\"");
+                attrs.push_str(&escape_html_attr(background));
+                attrs.push('"');
+            }
+            if let Some(bgcolor) = el.attr("bgcolor") {
+                attrs.push_str(" bgcolor=\"");
+                attrs.push_str(&escape_html_attr(bgcolor));
+                attrs.push('"');
+            }
+            return Some(attrs);
+        }
+    }
+    for child in node.children() {
+        if let Some(attrs) = collect_body_presentational_attrs(&child) {
+            return Some(attrs);
+        }
+    }
+    None
+}
+
+fn escape_html_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn replace_first_iframe(html: &str, replacement: &str) -> Option<String> {

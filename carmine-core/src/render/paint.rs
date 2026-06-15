@@ -5,7 +5,8 @@ use tiny_skia::{Color as SkColor, Paint, PathBuilder, Pixmap, Rect};
 
 use crate::render::layout::LayoutNode;
 use crate::render::style::{
-    Background, BoxShadow, Color, ComputedStyle, TextAlign, TextDecoration, Visibility, WhiteSpace,
+    Background, BackgroundPositionAxis, BoxShadow, Color, ComputedStyle, TextAlign, TextDecoration,
+    Visibility, WhiteSpace,
 };
 
 static FONTS: OnceLock<FontBook> = OnceLock::new();
@@ -134,6 +135,19 @@ fn paint_node(node: &LayoutNode, pixmap: &mut Pixmap, scale: f32) {
             h - bw * 2.0,
             br,
             bg,
+            scale,
+        );
+    }
+
+    if let Some(ref bg_img) = node.background_image {
+        draw_background_image(
+            pixmap,
+            bg_img,
+            node,
+            x + bw,
+            y + bw,
+            w - bw * 2.0,
+            h - bw * 2.0,
             scale,
         );
     }
@@ -945,6 +959,170 @@ fn draw_image(
                 continue;
             }
             let dst_idx = ((py * pixmap_w + px) * 4) as usize;
+            let data = pixmap.data_mut();
+            let r = img.rgba[src_idx];
+            let g = img.rgba[src_idx + 1];
+            let b = img.rgba[src_idx + 2];
+            let a = img.rgba[src_idx + 3];
+            if a == 255 {
+                data[dst_idx] = r;
+                data[dst_idx + 1] = g;
+                data[dst_idx + 2] = b;
+                data[dst_idx + 3] = 255;
+            } else if a > 0 {
+                let alpha = a as f32 / 255.0;
+                data[dst_idx] = (r as f32 * alpha + data[dst_idx] as f32 * (1.0 - alpha)) as u8;
+                data[dst_idx + 1] =
+                    (g as f32 * alpha + data[dst_idx + 1] as f32 * (1.0 - alpha)) as u8;
+                data[dst_idx + 2] =
+                    (b as f32 * alpha + data[dst_idx + 2] as f32 * (1.0 - alpha)) as u8;
+                data[dst_idx + 3] = 255;
+            }
+        }
+    }
+}
+
+fn draw_background_image(
+    pixmap: &mut Pixmap,
+    img: &crate::render::layout::LayoutImage,
+    node: &LayoutNode,
+    area_x: f32,
+    area_y: f32,
+    area_w: f32,
+    area_h: f32,
+    scale: f32,
+) {
+    if img.width == 0 || img.height == 0 || img.rgba.is_empty() || area_w <= 0.0 || area_h <= 0.0 {
+        return;
+    }
+
+    let image_w = img.width as f32;
+    let image_h = img.height as f32;
+    let viewport_w = pixmap.width() as f32 / scale;
+    let offset_x = resolve_background_offset(
+        node.style.background_position_x,
+        area_w,
+        image_w,
+        viewport_w,
+    );
+    let offset_y = resolve_background_offset(
+        node.style.background_position_y,
+        area_h,
+        image_h,
+        viewport_w,
+    );
+
+    let repeat_x = node.style.background_repeat_x;
+    let repeat_y = node.style.background_repeat_y;
+
+    let start_x = if repeat_x {
+        area_x + offset_x.rem_euclid(image_w) - image_w
+    } else {
+        area_x + offset_x
+    };
+    let start_y = if repeat_y {
+        area_y + offset_y.rem_euclid(image_h) - image_h
+    } else {
+        area_y + offset_y
+    };
+
+    let mut ty = start_y;
+    loop {
+        let mut tx = start_x;
+        loop {
+            draw_image_clipped(
+                pixmap, img, tx, ty, image_w, image_h, area_x, area_y, area_w, area_h,
+            );
+            if !repeat_x {
+                break;
+            }
+            tx += image_w;
+            if tx >= area_x + area_w {
+                break;
+            }
+        }
+        if !repeat_y {
+            break;
+        }
+        ty += image_h;
+        if ty >= area_y + area_h {
+            break;
+        }
+    }
+}
+
+fn resolve_background_offset(
+    axis: BackgroundPositionAxis,
+    area: f32,
+    image: f32,
+    viewport_w: f32,
+) -> f32 {
+    match axis {
+        BackgroundPositionAxis::Start(length) => length.resolve_px(area, viewport_w),
+        BackgroundPositionAxis::Center(length) => {
+            (area - image) * 0.5 + length.resolve_px(area, viewport_w)
+        }
+        BackgroundPositionAxis::End(length) => (area - image) + length.resolve_px(area, viewport_w),
+    }
+}
+
+fn draw_image_clipped(
+    pixmap: &mut Pixmap,
+    img: &crate::render::layout::LayoutImage,
+    dst_x: f32,
+    dst_y: f32,
+    dst_w: f32,
+    dst_h: f32,
+    clip_x: f32,
+    clip_y: f32,
+    clip_w: f32,
+    clip_h: f32,
+) {
+    if img.width == 0 || img.height == 0 || img.rgba.is_empty() || dst_w <= 0.0 || dst_h <= 0.0 {
+        return;
+    }
+
+    let src_w = img.width as f32;
+    let src_h = img.height as f32;
+    let left = dst_x.round() as i32;
+    let top = dst_y.round() as i32;
+    let right = (dst_x + dst_w).round() as i32;
+    let bottom = (dst_y + dst_h).round() as i32;
+    let clip_left = clip_x.round() as i32;
+    let clip_top = clip_y.round() as i32;
+    let clip_right = (clip_x + clip_w).round() as i32;
+    let clip_bottom = (clip_y + clip_h).round() as i32;
+    if right <= left || bottom <= top {
+        return;
+    }
+
+    let scale_x = src_w / dst_w;
+    let scale_y = src_h / dst_h;
+    let pixmap_w = pixmap.width() as i32;
+    let pixmap_h = pixmap.height() as i32;
+    let draw_left = left.max(0).max(clip_left);
+    let draw_top = top.max(0).max(clip_top);
+    let draw_right = right.min(pixmap_w).min(clip_right);
+    let draw_bottom = bottom.min(pixmap_h).min(clip_bottom);
+    if draw_right <= draw_left || draw_bottom <= draw_top {
+        return;
+    }
+
+    for py in draw_top..draw_bottom {
+        let sy = ((py - top) as f32 * scale_y) as u32;
+        if sy >= img.height {
+            continue;
+        }
+        for px in draw_left..draw_right {
+            let sx = ((px - left) as f32 * scale_x) as u32;
+            if sx >= img.width {
+                continue;
+            }
+            let src_idx = ((sy * img.width + sx) * 4) as usize;
+            if src_idx + 3 >= img.rgba.len() {
+                continue;
+            }
+            let dst_idx = (((py as u32) * pixmap.width() + px as u32) * 4) as usize;
             let data = pixmap.data_mut();
             let r = img.rgba[src_idx];
             let g = img.rgba[src_idx + 1];

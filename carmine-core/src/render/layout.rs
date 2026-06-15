@@ -22,6 +22,7 @@ pub struct LayoutNode {
     pub text: Option<String>,
     pub inline_fragments: Vec<LayoutTextFragment>,
     pub image: Option<LayoutImage>,
+    pub background_image: Option<LayoutImage>,
     pub children: Vec<LayoutNode>,
 }
 
@@ -139,6 +140,9 @@ fn inject_images(
             }
             node.image = Some(img);
         }
+    }
+    if let Some(ref src) = link.styled.style.background_image_src {
+        node.background_image = load_image_for_layout(src, loader);
     }
     for (child_layout, child_link) in node.children.iter_mut().zip(link.children.iter()) {
         inject_images(child_layout, child_link, loader);
@@ -706,6 +710,7 @@ fn extract(
         text,
         inline_fragments,
         image: None,
+        background_image: None,
         children,
     }
 }
