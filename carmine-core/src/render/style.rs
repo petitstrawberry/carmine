@@ -125,6 +125,9 @@ pub struct ComputedStyle {
     pub text_transform: TextTransform,
     pub grid_template_columns: String,
     pub box_shadow: Option<BoxShadow>,
+    pub img_src: Option<String>,
+    pub img_width: Option<u32>,
+    pub img_height: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -252,6 +255,7 @@ pub struct StyledNode {
     pub style: ComputedStyle,
     pub pseudo_before: Option<ComputedStyle>,
     pub pseudo_after: Option<ComputedStyle>,
+    pub img_src: Option<String>,
     pub children: Vec<StyledNode>,
 }
 
@@ -305,6 +309,7 @@ fn cascade(
                 style: parent.clone(),
                 pseudo_before: None,
                 pseudo_after: None,
+                img_src: None,
                 children,
             }
         }
@@ -425,11 +430,18 @@ fn cascade(
                 )
             };
 
+            let img_src = if tag.eq_ignore_ascii_case("img") {
+                el.attr("src").map(|s| s.to_string())
+            } else {
+                None
+            };
+
             StyledNode {
                 kind: StyledKind::Element { tag },
                 style,
                 pseudo_before,
                 pseudo_after,
+                img_src,
                 children,
             }
         }
@@ -467,12 +479,16 @@ fn cascade(
                 text_transform: TextTransform::None,
                 grid_template_columns: String::new(),
                 box_shadow: None,
+                img_src: None,
+                img_width: None,
+                img_height: None,
             };
             StyledNode {
                 kind: StyledKind::Text(text.to_string()),
                 style: inherited,
                 pseudo_before: None,
                 pseudo_after: None,
+                img_src: None,
                 children: Vec::new(),
             }
         }
@@ -481,6 +497,7 @@ fn cascade(
             style: parent.clone(),
             pseudo_before: None,
             pseudo_after: None,
+            img_src: None,
             children: Vec::new(),
         },
     }
@@ -538,6 +555,9 @@ fn compute_pseudo_style(
         text_transform: parent.text_transform,
         grid_template_columns: String::new(),
         box_shadow: None,
+        img_src: None,
+        img_width: None,
+        img_height: None,
     };
 
     for (decl, _) in &decls {
@@ -662,6 +682,9 @@ fn default_block() -> ComputedStyle {
         text_transform: TextTransform::None,
         grid_template_columns: String::new(),
         box_shadow: None,
+        img_src: None,
+        img_width: None,
+        img_height: None,
     }
 }
 

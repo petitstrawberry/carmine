@@ -12,3 +12,4 @@ csscolorparser = "0.8"
 taffy = "0.7"
 tiny-skia = "0.11"
 ab_glyph = "0.2"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp"] }

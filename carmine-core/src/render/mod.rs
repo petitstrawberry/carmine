@@ -11,6 +11,7 @@ pub struct RenderPipeline {
     matches: css::MatchMap,
     pseudo_matches: css::PseudoMatchMap,
     options: RenderOptions,
+    image_loader: Option<Box<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>>,
 
     style_cache: Option<style::StyledNode>,
     layout_cache: Option<layout::LayoutNode>,
@@ -53,11 +54,20 @@ impl RenderPipeline {
             matches,
             pseudo_matches,
             options,
+            image_loader: None,
             style_cache: None,
             layout_cache: None,
             pixmap_cache: None,
             cached_key: CacheKey::default(),
         }
+    }
+
+    pub fn set_image_loader<F>(&mut self, loader: F)
+    where
+        F: Fn(&str) -> Option<Vec<u8>> + Send + Sync + 'static,
+    {
+        self.image_loader = Some(Box::new(loader));
+        self.invalidate();
     }
 
     pub fn content_height(&mut self, physical_w: u32, physical_h: u32, scale: f32) -> f32 {
@@ -117,7 +127,12 @@ impl RenderPipeline {
             || self.cached_key.logical_h != logical_h
         {
             let styled = self.style_cache.as_ref().expect("style cache");
-            self.layout_cache = Some(layout::layout(styled, logical_w, logical_h));
+            self.layout_cache = Some(layout::layout_with_images(
+                styled,
+                logical_w,
+                logical_h,
+                self.image_loader.as_ref(),
+            ));
         }
 
         let layout_tree = self.layout_cache.as_ref().expect("layout cache");

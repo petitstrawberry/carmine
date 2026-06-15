@@ -20,7 +20,15 @@ pub struct LayoutNode {
     pub pseudo_before: Option<ComputedStyle>,
     pub pseudo_after: Option<ComputedStyle>,
     pub text: Option<String>,
+    pub image: Option<LayoutImage>,
     pub children: Vec<LayoutNode>,
+}
+
+#[derive(Clone, Debug)]
+pub struct LayoutImage {
+    pub rgba: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl LayoutNode {
@@ -45,6 +53,15 @@ struct TaffyLink<'a> {
 }
 
 pub fn layout(root: &StyledNode, viewport_w: u32, viewport_h: u32) -> LayoutNode {
+    layout_with_images(root, viewport_w, viewport_h, None)
+}
+
+pub fn layout_with_images(
+    root: &StyledNode,
+    viewport_w: u32,
+    viewport_h: u32,
+    image_loader: Option<&Box<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>>,
+) -> LayoutNode {
     let mut tree: TaffyTree<TextMeasureData> = TaffyTree::new();
     let vw = viewport_w as f32;
     let vh = viewport_h as f32;
@@ -65,7 +82,31 @@ pub fn layout(root: &StyledNode, viewport_w: u32, viewport_h: u32) -> LayoutNode
     )
     .expect("taffy layout failed");
 
-    extract(&link, &tree, 0.0, 0.0)
+    let mut root_layout = extract(&link, &tree, 0.0, 0.0);
+    if let Some(ref loader) = image_loader {
+        let l: &dyn Fn(&str) -> Option<Vec<u8>> = loader.as_ref();
+        inject_images(&mut root_layout, &link, l);
+    }
+    root_layout
+}
+
+fn inject_images(
+    node: &mut LayoutNode,
+    link: &TaffyLink,
+    loader: &dyn Fn(&str) -> Option<Vec<u8>>,
+) {
+    if let Some(ref src) = link.styled.img_src {
+        if let Some(img) = load_image_for_layout(src, loader) {
+            if node.width == 0.0 || node.height == 0.0 {
+                node.width = img.width as f32;
+                node.height = img.height as f32;
+            }
+            node.image = Some(img);
+        }
+    }
+    for (child_layout, child_link) in node.children.iter_mut().zip(link.children.iter()) {
+        inject_images(child_layout, child_link, loader);
+    }
 }
 
 fn build_taffy_tree<'a>(
@@ -271,8 +312,24 @@ fn extract(
         pseudo_before: link.styled.pseudo_before.clone(),
         pseudo_after: link.styled.pseudo_after.clone(),
         text,
+        image: None,
         children,
     }
+}
+
+fn load_image_for_layout(
+    src: &str,
+    loader: &dyn Fn(&str) -> Option<Vec<u8>>,
+) -> Option<LayoutImage> {
+    let raw = loader(src)?;
+    let img = image::load_from_memory(&raw).ok()?.to_rgba8();
+    let width = img.width();
+    let height = img.height();
+    Some(LayoutImage {
+        rgba: img.into_raw(),
+        width,
+        height,
+    })
 }
 
 fn to_taffy_style(s: &ComputedStyle, vw: f32, vh: f32) -> TaffyStyle {
