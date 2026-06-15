@@ -6,31 +6,81 @@ use tiny_skia::{Color as SkColor, Paint, PathBuilder, Pixmap, Rect};
 use crate::render::layout::LayoutNode;
 use crate::render::style::{Background, BoxShadow, Color, ComputedStyle};
 
-static FONT: OnceLock<Option<FontVec>> = OnceLock::new();
+static FONTS: OnceLock<FontBook> = OnceLock::new();
 
-fn load_font() -> Option<FontVec> {
+struct FontBook {
+    fonts: Vec<FontVec>,
+}
+
+fn load_fonts() -> FontBook {
     let paths = [
+        "/fonts/Mplus1-Regular.ttf",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W4.ttc",
+        "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
+        "/System/Library/Fonts/CJKSymbolsFallback.ttc",
+        "/Library/Fonts/Arial Unicode.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/System/Library/Fonts/SFNS.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
         "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
         "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-        "/fonts/Mplus1-Regular.ttf",
         "/fonts/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/System/Library/Fonts/Supplemental/Arial.ttf",
     ];
 
+    let mut fonts = Vec::new();
     for path in paths {
         if let Ok(data) = std::fs::read(path) {
             if let Ok(font) = FontVec::try_from_vec(data) {
-                return Some(font);
+                fonts.push(font);
             }
         }
     }
-    None
+
+    FontBook { fonts }
 }
 
-fn get_font() -> Option<&'static FontVec> {
-    FONT.get_or_init(load_font).as_ref()
+fn get_fonts() -> Option<&'static FontBook> {
+    let fonts = FONTS.get_or_init(load_fonts);
+    if fonts.fonts.is_empty() {
+        None
+    } else {
+        Some(fonts)
+    }
+}
+
+impl FontBook {
+    fn glyph_font_index(&self, ch: char, font_size: f32) -> Option<usize> {
+        let fallback = if ch.is_control() { None } else { Some(0) };
+
+        self.fonts
+            .iter()
+            .enumerate()
+            .find_map(|(idx, font)| {
+                let scaled = font.as_scaled(font_size);
+                if scaled.glyph_id(ch).0 != 0 {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .or(fallback)
+    }
+
+    fn h_advance(&self, ch: char, font_size: f32) -> f32 {
+        let Some(idx) = self.glyph_font_index(ch, font_size) else {
+            return 0.0;
+        };
+        let scaled = self.fonts[idx].as_scaled(font_size);
+        scaled.h_advance(scaled.glyph_id(ch))
+    }
+
+    fn ascent(&self, font_size: f32) -> f32 {
+        self.fonts[0].as_scaled(font_size).ascent()
+    }
 }
 
 pub fn paint(root: &LayoutNode, physical_w: u32, physical_h: u32, scale: f32) -> Pixmap {
@@ -115,6 +165,10 @@ fn paint_node(node: &LayoutNode, pixmap: &mut Pixmap, scale: f32) {
             node.style.font_size * scale,
             node.style.color,
         );
+    }
+
+    if let Some(ref img) = node.image {
+        draw_image(pixmap, img, x, y, w, h);
     }
 
     if let Some(ref text) = node.text {
@@ -220,13 +274,12 @@ fn draw_text(
     letter_spacing: f32,
     max_width: f32,
 ) {
-    let Some(font) = get_font() else {
+    let Some(fonts) = get_fonts() else {
         draw_text_placeholder(pixmap, text, x, y, font_size, color);
         return;
     };
 
-    let scaled = font.as_scaled(font_size);
-    let ascent = scaled.ascent();
+    let ascent = fonts.ascent(font_size);
     let line_height = font_size * 1.2;
 
     let pw = pixmap.width();
@@ -235,10 +288,10 @@ fn draw_text(
     let mut pen_x = x;
     let mut pen_y = y + ascent;
 
-    let space_advance = scaled.h_advance(scaled.glyph_id(' ')) + letter_spacing;
+    let space_advance = fonts.h_advance(' ', font_size) + letter_spacing;
 
     for word in text.split(' ') {
-        let word_width = measure_word_width(&scaled, word, letter_spacing);
+        let word_width = measure_word_width(fonts, word, font_size, letter_spacing);
         let sep = if pen_x > x { space_advance } else { 0.0 };
         if pen_x > x && pen_x + sep + word_width > x + max_width {
             pen_x = x;
@@ -250,6 +303,10 @@ fn draw_text(
         }
 
         for ch in word.chars() {
+            let Some(font_idx) = fonts.glyph_font_index(ch, font_size) else {
+                continue;
+            };
+            let scaled = fonts.fonts[font_idx].as_scaled(font_size);
             let glyph_id = scaled.glyph_id(ch);
             let advance = scaled.h_advance(glyph_id);
             let glyph: Glyph = glyph_id.with_scale_and_position(font_size, (pen_x, pen_y));
@@ -283,9 +340,14 @@ fn draw_text(
     }
 }
 
-fn measure_word_width<F: Font>(font: &impl ScaleFont<F>, word: &str, letter_spacing: f32) -> f32 {
+fn measure_word_width(
+    fonts: &FontBook,
+    word: &str,
+    font_size: f32,
+    letter_spacing: f32,
+) -> f32 {
     word.chars()
-        .map(|ch| font.h_advance(font.glyph_id(ch)) + letter_spacing)
+        .map(|ch| fonts.h_advance(ch, font_size) + letter_spacing)
         .sum()
 }
 
@@ -561,6 +623,73 @@ fn lerp_color(c1: Color, c2: Color, t: f32) -> Color {
         g: (c1.g as f32 + (c2.g as f32 - c1.g as f32) * t) as u8,
         b: (c1.b as f32 + (c2.b as f32 - c1.b as f32) * t) as u8,
         a: (c1.a as f32 + (c2.a as f32 - c1.a as f32) * t) as u8,
+    }
+}
+
+fn draw_image(
+    pixmap: &mut Pixmap,
+    img: &crate::render::layout::LayoutImage,
+    dst_x: f32,
+    dst_y: f32,
+    dst_w: f32,
+    dst_h: f32,
+) {
+    if img.width == 0 || img.height == 0 || img.rgba.is_empty() {
+        return;
+    }
+
+    let src_w = img.width as f32;
+    let src_h = img.height as f32;
+    let dst_iw = dst_w.round() as u32;
+    let dst_ih = dst_h.round() as u32;
+    if dst_iw == 0 || dst_ih == 0 {
+        return;
+    }
+
+    let scale_x = src_w / dst_w;
+    let scale_y = src_h / dst_h;
+    let pixmap_w = pixmap.width();
+
+    for dy in 0..dst_ih {
+        let sy = (dy as f32 * scale_y) as u32;
+        if sy >= img.height {
+            break;
+        }
+        for dx in 0..dst_iw {
+            let sx = (dx as f32 * scale_x) as u32;
+            if sx >= img.width {
+                break;
+            }
+            let src_idx = ((sy * img.width + sx) * 4) as usize;
+            if src_idx + 3 >= img.rgba.len() {
+                break;
+            }
+            let px = (dst_x.round() as i64 + dx as i64) as u32;
+            let py = (dst_y.round() as i64 + dy as i64) as u32;
+            if px >= pixmap_w || py >= pixmap.height() {
+                continue;
+            }
+            let dst_idx = ((py * pixmap_w + px) * 4) as usize;
+            let data = pixmap.data_mut();
+            let r = img.rgba[src_idx];
+            let g = img.rgba[src_idx + 1];
+            let b = img.rgba[src_idx + 2];
+            let a = img.rgba[src_idx + 3];
+            if a == 255 {
+                data[dst_idx] = r;
+                data[dst_idx + 1] = g;
+                data[dst_idx + 2] = b;
+                data[dst_idx + 3] = 255;
+            } else if a > 0 {
+                let alpha = a as f32 / 255.0;
+                data[dst_idx] = (r as f32 * alpha + data[dst_idx] as f32 * (1.0 - alpha)) as u8;
+                data[dst_idx + 1] =
+                    (g as f32 * alpha + data[dst_idx + 1] as f32 * (1.0 - alpha)) as u8;
+                data[dst_idx + 2] =
+                    (b as f32 * alpha + data[dst_idx + 2] as f32 * (1.0 - alpha)) as u8;
+                data[dst_idx + 3] = 255;
+            }
+        }
     }
 }
 
