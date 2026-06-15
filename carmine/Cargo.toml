@@ -24,3 +24,5 @@ scarlet-ui = { git = "https://github.com/petitstrawberry/Scarlet", package = "sc
 scarlet-ui-macros = { git = "https://github.com/petitstrawberry/Scarlet", package = "scarlet-ui-macros", optional = true }
 scraper = "0.27.0"
 ego-tree = "0.11.0"
+ureq = { version = "2", features = ["tls"] }
+getrandom = { version = "0.2", features = ["custom"] }
