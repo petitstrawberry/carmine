@@ -140,6 +140,8 @@ dependencies = [
  "clap",
  "ego-tree 0.11.0",
  "getrandom",
+ "rustls",
+ "rustls-pki-types",
  "scarlet-os",
  "scarlet-sys",
  "scarlet-ui",
@@ -147,6 +149,7 @@ dependencies = [
  "scraper 0.27.0",
  "ureq",
  "url",
+ "webpki-roots 1.0.7",
 ]
 
 [[package]]

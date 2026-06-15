@@ -123,11 +123,56 @@ pub struct ComputedStyle {
     pub box_sizing: BoxSizing,
     pub letter_spacing: f32,
     pub text_transform: TextTransform,
+    pub text_align: TextAlign,
+    pub text_decoration: TextDecoration,
+    pub line_height: LineHeight,
+    pub border_top_width: f32,
+    pub border_top_color: Option<Color>,
+    pub border_right_width: f32,
+    pub border_right_color: Option<Color>,
+    pub border_bottom_width: f32,
+    pub border_bottom_color: Option<Color>,
     pub grid_template_columns: String,
     pub box_shadow: Option<BoxShadow>,
     pub img_src: Option<String>,
     pub img_width: Option<u32>,
     pub img_height: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TextAlign {
+    Start,
+    Left,
+    Right,
+    Center,
+    Justify,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TextDecoration {
+    None,
+    Underline,
+    LineThrough,
+    Overline,
+}
+
+/// CSS line-height value: `Normal` = 1.2 multiplier, `Number(f32)` = multiplier, `Px(f32)` = absolute.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LineHeight {
+    Normal,
+    Number(f32),
+    Px(f32),
+}
+
+impl LineHeight {
+    /// Resolve to an absolute pixel value for the given font size.
+    pub fn resolve_px(self, font_size: f32) -> f32 {
+        match self {
+            LineHeight::Normal => font_size * 1.2,
+            LineHeight::Number(n) => font_size * n,
+            LineHeight::Px(px) => px,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -318,6 +363,8 @@ fn cascade(
             let id = node_ref.id();
             let mut style = default_for_tag(&tag, body_margin);
 
+            apply_html_attributes(&tag, el, &mut style);
+
             let matched_count = matches.get(&id).map_or(0, |d| d.len());
             if matched_count > 0 {
                 println!(
@@ -417,7 +464,18 @@ fn cascade(
             let pseudo_after =
                 compute_pseudo_style(id, pseudo_matches, PseudoElement::After, &style);
 
-            let children = if style.display == Display::None {
+            let input_type = el.attr("type").unwrap_or("").to_lowercase();
+            let input_value = el.attr("value").unwrap_or("").to_string();
+            let is_hidden_input = tag.eq_ignore_ascii_case("input") && input_type == "hidden";
+            if is_hidden_input {
+                style.display = Display::None;
+            }
+            let show_input_text = tag.eq_ignore_ascii_case("input")
+                && !is_hidden_input
+                && matches!(input_type.as_str(), "submit" | "button" | "reset" | "")
+                && !input_value.is_empty();
+
+            let mut children = if style.display == Display::None {
                 Vec::new()
             } else {
                 walk_children(
@@ -429,6 +487,25 @@ fn cascade(
                     body_margin,
                 )
             };
+
+            if show_input_text {
+                children.push(StyledNode {
+                    kind: StyledKind::Text(input_value),
+                    style: ComputedStyle {
+                        display: Display::Inline,
+                        font_size: style.font_size,
+                        color: style.color,
+                        text_align: style.text_align,
+                        text_decoration: style.text_decoration,
+                        line_height: style.line_height,
+                        ..default_block()
+                    },
+                    pseudo_before: None,
+                    pseudo_after: None,
+                    img_src: None,
+                    children: Vec::new(),
+                });
+            }
 
             let img_src = if tag.eq_ignore_ascii_case("img") {
                 el.attr("src").map(|s| s.to_string())
@@ -451,37 +528,12 @@ fn cascade(
                 font_size: parent.font_size,
                 font_weight: parent.font_weight,
                 color: parent.color,
-                background_color: None,
-                margin_top: Length::Zero,
-                margin_bottom: Length::Zero,
-                margin_left: Length::Zero,
-                margin_right: Length::Zero,
-                padding_top: Length::Zero,
-                padding_right: Length::Zero,
-                padding_bottom: Length::Zero,
-                padding_left: Length::Zero,
-                flex_direction: FlexDirection::Unspecified,
-                justify_content: JustifyContent::Unspecified,
-                align_items: AlignItems::Unspecified,
-                flex_wrap: FlexWrap::Unspecified,
-                gap: Length::Zero,
-                border_width: 0.0,
-                border_color: None,
-                border_left_width: 0.0,
-                border_left_color: None,
-                border_radius: 0.0,
-                width: Length::Auto,
-                height: Length::Auto,
-                max_width: Length::Auto,
-                min_height: Length::Auto,
-                box_sizing: BoxSizing::ContentBox,
-                letter_spacing: 0.0,
-                text_transform: TextTransform::None,
-                grid_template_columns: String::new(),
-                box_shadow: None,
-                img_src: None,
-                img_width: None,
-                img_height: None,
+                letter_spacing: parent.letter_spacing,
+                text_transform: parent.text_transform,
+                text_align: parent.text_align,
+                text_decoration: parent.text_decoration,
+                line_height: parent.line_height,
+                ..default_block()
             };
             StyledNode {
                 kind: StyledKind::Text(text.to_string()),
@@ -527,37 +579,12 @@ fn compute_pseudo_style(
         font_size: parent.font_size,
         font_weight: parent.font_weight,
         color: parent.color,
-        background_color: None,
-        margin_top: Length::Zero,
-        margin_bottom: Length::Zero,
-        margin_left: Length::Zero,
-        margin_right: Length::Zero,
-        padding_top: Length::Zero,
-        padding_right: Length::Zero,
-        padding_bottom: Length::Zero,
-        padding_left: Length::Zero,
-        flex_direction: FlexDirection::Unspecified,
-        justify_content: JustifyContent::Unspecified,
-        align_items: AlignItems::Unspecified,
-        flex_wrap: FlexWrap::Unspecified,
-        gap: Length::Zero,
-        border_width: 0.0,
-        border_color: None,
-        border_left_width: 0.0,
-        border_left_color: None,
-        border_radius: 0.0,
-        width: Length::Auto,
-        height: Length::Auto,
-        max_width: Length::Auto,
-        min_height: Length::Auto,
-        box_sizing: BoxSizing::ContentBox,
         letter_spacing: parent.letter_spacing,
         text_transform: parent.text_transform,
-        grid_template_columns: String::new(),
-        box_shadow: None,
-        img_src: None,
-        img_width: None,
-        img_height: None,
+        text_align: parent.text_align,
+        text_decoration: parent.text_decoration,
+        line_height: parent.line_height,
+        ..default_block()
     };
 
     for (decl, _) in &decls {
@@ -596,6 +623,42 @@ fn is_heading_tag(tag: &str) -> bool {
         tag.to_lowercase().as_str(),
         "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
     )
+}
+
+fn apply_html_attributes(tag: &str, el: &scraper::node::Element, style: &mut ComputedStyle) {
+    match tag.to_lowercase().as_str() {
+        "table" => {
+            if let Some(cp) = el.attr("cellpadding") {
+                if let Ok(px) = cp.trim().parse::<f32>() {
+                    let len = Length::px(px);
+                    style.padding_top = len;
+                    style.padding_right = len;
+                    style.padding_bottom = len;
+                    style.padding_left = len;
+                }
+            }
+            if let Some(_) = el.attr("cellspacing") {
+                if let Some(cs) = el.attr("cellspacing") {
+                    if let Ok(px) = cs.trim().parse::<f32>() {
+                        style.gap = Length::px(px);
+                    }
+                }
+            }
+        }
+        "img" => {
+            if let Some(w) = el.attr("width") {
+                if let Ok(px) = w.trim().parse::<f32>() {
+                    style.width = Length::px(px);
+                }
+            }
+            if let Some(h) = el.attr("height") {
+                if let Ok(px) = h.trim().parse::<f32>() {
+                    style.height = Length::px(px);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn resolve_font_size(len: Length, parent_font_size: f32, viewport_w: f32) -> f32 {
@@ -680,6 +743,15 @@ fn default_block() -> ComputedStyle {
         box_sizing: BoxSizing::ContentBox,
         letter_spacing: 0.0,
         text_transform: TextTransform::None,
+        text_align: TextAlign::Start,
+        text_decoration: TextDecoration::None,
+        line_height: LineHeight::Normal,
+        border_top_width: 0.0,
+        border_top_color: None,
+        border_right_width: 0.0,
+        border_right_color: None,
+        border_bottom_width: 0.0,
+        border_bottom_color: None,
         grid_template_columns: String::new(),
         box_shadow: None,
         img_src: None,
@@ -741,6 +813,7 @@ fn default_for_tag(tag: &str, body_margin: f32) -> ComputedStyle {
         },
         "li" => base,
         "a" => ComputedStyle {
+            display: Display::Inline,
             color: Color {
                 r: 0,
                 g: 0,
@@ -752,6 +825,52 @@ fn default_for_tag(tag: &str, body_margin: f32) -> ComputedStyle {
         "b" | "strong" => ComputedStyle {
             display: Display::Inline,
             font_weight: 700,
+            ..base
+        },
+        "center" => ComputedStyle {
+            text_align: TextAlign::Center,
+            align_items: AlignItems::Center,
+            ..base
+        },
+        "input" | "button" | "select" | "textarea" => ComputedStyle {
+            display: Display::Inline,
+            border_width: 1.0,
+            border_color: Some(Color {
+                r: 118,
+                g: 118,
+                b: 118,
+                a: 255,
+            }),
+            padding_top: Length::px(3.0),
+            padding_bottom: Length::px(3.0),
+            padding_left: Length::px(6.0),
+            padding_right: Length::px(6.0),
+            background_color: Some(Background::Solid(Color::WHITE)),
+            height: Length::px(20.0),
+            ..base
+        },
+        "table" => ComputedStyle {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            width: Length::Auto,
+            ..base
+        },
+        "thead" | "tbody" | "tfoot" => ComputedStyle {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            ..base
+        },
+        "tr" => ComputedStyle {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Row,
+            ..base
+        },
+        "td" | "th" => ComputedStyle {
+            display: Display::Block,
+            padding_top: Length::px(1.0),
+            padding_bottom: Length::px(1.0),
+            padding_left: Length::px(8.0),
+            padding_right: Length::px(8.0),
             ..base
         },
         _ => ComputedStyle {
@@ -902,6 +1021,69 @@ fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
         "box-shadow" => {
             style.box_shadow = parse_box_shadow(value);
         }
+        "text-align" => {
+            style.text_align = match value.trim() {
+                "center" => TextAlign::Center,
+                "right" => TextAlign::Right,
+                "left" => TextAlign::Left,
+                "justify" => TextAlign::Justify,
+                _ => TextAlign::Start,
+            };
+        }
+        "text-decoration" => {
+            let v = value.trim();
+            if v.contains("underline") {
+                style.text_decoration = TextDecoration::Underline;
+            } else if v.contains("line-through") {
+                style.text_decoration = TextDecoration::LineThrough;
+            } else if v.contains("overline") {
+                style.text_decoration = TextDecoration::Overline;
+            } else {
+                style.text_decoration = TextDecoration::None;
+            }
+        }
+        "line-height" => {
+            style.line_height = parse_line_height(value);
+        }
+        "border-top" => {
+            let (w, c) = parse_border_shorthand(value);
+            style.border_top_width = w;
+            style.border_top_color = c;
+        }
+        "border-right" => {
+            let (w, c) = parse_border_shorthand(value);
+            style.border_right_width = w;
+            style.border_right_color = c;
+        }
+        "border-bottom" => {
+            let (w, c) = parse_border_shorthand(value);
+            style.border_bottom_width = w;
+            style.border_bottom_color = c;
+        }
+        "border-top-width" => {
+            if let Some(v) = parse_simple_px(value) {
+                style.border_top_width = v;
+            }
+        }
+        "border-right-width" => {
+            if let Some(v) = parse_simple_px(value) {
+                style.border_right_width = v;
+            }
+        }
+        "border-bottom-width" => {
+            if let Some(v) = parse_simple_px(value) {
+                style.border_bottom_width = v;
+            }
+        }
+        "border-top-color" => {
+            style.border_top_color = parse_color(value);
+        }
+        "border-right-color" => {
+            style.border_right_color = parse_color(value);
+        }
+        "border-bottom-color" => {
+            style.border_bottom_color = parse_color(value);
+        }
         _ => {}
     }
 }
@@ -955,6 +1137,26 @@ fn parse_length_token(value: &str) -> Length {
         Ok(Token::Number { value, .. }) => Length::px(*value),
         Ok(Token::Ident(ident)) if ident.eq_ignore_ascii_case("auto") => Length::Auto,
         _ => Length::Zero,
+    }
+}
+
+fn parse_line_height(value: &str) -> LineHeight {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("normal") {
+        return LineHeight::Normal;
+    }
+    let mut input = ParserInput::new(value);
+    let mut parser = CssParser::new(&mut input);
+    match parser.next() {
+        Ok(Token::Number { value, .. }) => LineHeight::Number(*value),
+        Ok(Token::Dimension { value, unit, .. }) if unit.as_ref().eq_ignore_ascii_case("px") => {
+            LineHeight::Px(*value)
+        }
+        Ok(Token::Dimension { value, unit, .. }) if unit.as_ref().eq_ignore_ascii_case("em") => {
+            LineHeight::Number(*value)
+        }
+        Ok(Token::Percentage { unit_value, .. }) => LineHeight::Number(*unit_value),
+        _ => LineHeight::Normal,
     }
 }
 

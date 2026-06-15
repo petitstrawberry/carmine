@@ -83,8 +83,18 @@ fn main() {
     let base_path = args.file.clone().unwrap_or_default();
 
     if let Some(path) = args.dump_png {
+        let base = args.file.clone().unwrap_or_default();
         let mut pipeline =
             RenderPipeline::with_options(&html, args.width, args.height, render_options);
+        let base_for_loader = base.clone();
+        pipeline.set_image_loader(move |src: &str| {
+            let resolved = resolve::resolve_href_public(src, &base_for_loader);
+            if resolved.starts_with("http://") || resolved.starts_with("https://") {
+                fetch::fetch_bytes(&resolved).ok()
+            } else {
+                std::fs::read(&resolved).ok()
+            }
+        });
         let pixmap = pipeline.render_owned(args.width, args.height, 1.0);
         match pixmap.save_png(&path) {
             Ok(()) => println!("[carmine] wrote: {}", path),

@@ -4,7 +4,9 @@ use ab_glyph::{Font, FontVec, Glyph, ScaleFont};
 use tiny_skia::{Color as SkColor, Paint, PathBuilder, Pixmap, Rect};
 
 use crate::render::layout::LayoutNode;
-use crate::render::style::{Background, BoxShadow, Color, ComputedStyle};
+use crate::render::style::{
+    Background, BoxShadow, Color, ComputedStyle, TextAlign, TextDecoration,
+};
 
 static FONTS: OnceLock<FontBook> = OnceLock::new();
 
@@ -140,15 +142,60 @@ fn paint_node(node: &LayoutNode, pixmap: &mut Pixmap, scale: f32) {
 
     if node.style.border_left_width > 0.0 {
         if let Some(color) = node.style.border_left_color.or(node.style.border_color) {
-            draw_left_border(
+            draw_side_border(
                 pixmap,
                 x,
                 y,
                 w,
                 h,
                 node.style.border_left_width * scale,
-                br,
                 color,
+                BorderSide::Left,
+            );
+        }
+    }
+
+    if node.style.border_top_width > 0.0 {
+        if let Some(color) = node.style.border_top_color.or(node.style.border_color) {
+            draw_side_border(
+                pixmap,
+                x,
+                y,
+                w,
+                h,
+                node.style.border_top_width * scale,
+                color,
+                BorderSide::Top,
+            );
+        }
+    }
+
+    if node.style.border_right_width > 0.0 {
+        if let Some(color) = node.style.border_right_color.or(node.style.border_color) {
+            draw_side_border(
+                pixmap,
+                x,
+                y,
+                w,
+                h,
+                node.style.border_right_width * scale,
+                color,
+                BorderSide::Right,
+            );
+        }
+    }
+
+    if node.style.border_bottom_width > 0.0 {
+        if let Some(color) = node.style.border_bottom_color.or(node.style.border_color) {
+            draw_side_border(
+                pixmap,
+                x,
+                y,
+                w,
+                h,
+                node.style.border_bottom_width * scale,
+                color,
+                BorderSide::Bottom,
             );
         }
     }
@@ -214,6 +261,9 @@ fn paint_node(node: &LayoutNode, pixmap: &mut Pixmap, scale: f32) {
             node.style.color,
             node.style.letter_spacing * scale,
             max_width,
+            node.style.text_align,
+            node.style.line_height.resolve_px(node.style.font_size) * scale,
+            node.style.text_decoration,
         );
     }
 
@@ -273,6 +323,9 @@ fn draw_text(
     color: Color,
     letter_spacing: f32,
     max_width: f32,
+    text_align: TextAlign,
+    line_height_px: f32,
+    text_decoration: TextDecoration,
 ) {
     let Some(fonts) = get_fonts() else {
         draw_text_placeholder(pixmap, text, x, y, font_size, color);
@@ -280,72 +333,127 @@ fn draw_text(
     };
 
     let ascent = fonts.ascent(font_size);
-    let line_height = font_size * 1.2;
-
+    let descent = font_size - ascent;
     let pw = pixmap.width();
     let ph = pixmap.height();
-
-    let mut pen_x = x;
-    let mut pen_y = y + ascent;
-
     let space_advance = fonts.h_advance(' ', font_size) + letter_spacing;
 
-    for word in text.split(' ') {
+    let words: Vec<&str> = text.split(' ').collect();
+    let mut lines: Vec<(f32, Vec<&str>)> = Vec::new();
+    let mut current_line: Vec<&str> = Vec::new();
+    let mut current_width = 0.0f32;
+
+    for word in &words {
         let word_width = measure_word_width(fonts, word, font_size, letter_spacing);
-        let sep = if pen_x > x { space_advance } else { 0.0 };
-        if pen_x > x && pen_x + sep + word_width > x + max_width {
-            pen_x = x;
-            pen_y += line_height;
-        }
+        let sep = if !current_line.is_empty() {
+            space_advance
+        } else {
+            0.0
+        };
 
-        if pen_x > x {
-            pen_x += space_advance;
+        if !current_line.is_empty() && current_width + sep + word_width > max_width {
+            let line_w = current_width;
+            lines.push((line_w, std::mem::take(&mut current_line)));
+            current_width = word_width;
+            current_line.push(word);
+        } else {
+            current_width += sep + word_width;
+            current_line.push(word);
         }
+    }
+    if !current_line.is_empty() {
+        lines.push((current_width, current_line));
+    }
+    if lines.is_empty() {
+        lines.push((0.0, vec![]));
+    }
 
-        for ch in word.chars() {
-            let Some(font_idx) = fonts.glyph_font_index(ch, font_size) else {
-                continue;
-            };
-            let scaled = fonts.fonts[font_idx].as_scaled(font_size);
-            let glyph_id = scaled.glyph_id(ch);
-            let advance = scaled.h_advance(glyph_id);
-            let glyph: Glyph = glyph_id.with_scale_and_position(font_size, (pen_x, pen_y));
-            if let Some(outlined) = scaled.outline_glyph(glyph) {
-                let bounds = outlined.bounds();
-                let px0 = bounds.min.x;
-                let py0 = bounds.min.y;
-                outlined.draw(|gx: u32, gy: u32, coverage: f32| {
-                    let px = px0 + gx as f32;
-                    let py = py0 + gy as f32;
-                    if px >= 0.0 && py >= 0.0 && px < pw as f32 && py < ph as f32 {
-                        let ix = px as usize;
-                        let iy = py as usize;
-                        let idx = (iy * pw as usize + ix) * 4;
-                        let alpha = (coverage * color.a as f32) as u8;
-                        let pixels = pixmap.data_mut();
-                        pixels[idx] = blend(pixels[idx], color.r, alpha);
-                        pixels[idx + 1] = blend(pixels[idx + 1], color.g, alpha);
-                        pixels[idx + 2] = blend(pixels[idx + 2], color.b, alpha);
-                        pixels[idx + 3] = 255;
-                    }
-                });
+    let mut pen_y = y + ascent;
+
+    for (line_w, line_words) in &lines {
+        let align_offset = match text_align {
+            TextAlign::Center => ((max_width - line_w) / 2.0).max(0.0),
+            TextAlign::Right => (max_width - line_w).max(0.0),
+            _ => 0.0,
+        };
+        let mut pen_x = x + align_offset;
+
+        for (i, word) in line_words.iter().enumerate() {
+            if i > 0 {
+                pen_x += space_advance;
             }
-            pen_x += advance + letter_spacing;
-
-            if pen_x > x + max_width {
-                pen_x = x;
-                pen_y += line_height;
+            for ch in word.chars() {
+                let Some(font_idx) = fonts.glyph_font_index(ch, font_size) else {
+                    continue;
+                };
+                let scaled = fonts.fonts[font_idx].as_scaled(font_size);
+                let glyph_id = scaled.glyph_id(ch);
+                let advance = scaled.h_advance(glyph_id);
+                let glyph: Glyph = glyph_id.with_scale_and_position(font_size, (pen_x, pen_y));
+                if let Some(outlined) = scaled.outline_glyph(glyph) {
+                    let bounds = outlined.px_bounds();
+                    let px0 = bounds.min.x;
+                    let py0 = bounds.min.y;
+                    outlined.draw(|gx: u32, gy: u32, coverage: f32| {
+                        let px = px0 + gx as f32;
+                        let py = py0 + gy as f32;
+                        if px >= 0.0 && py >= 0.0 && px < pw as f32 && py < ph as f32 {
+                            let ix = px as usize;
+                            let iy = py as usize;
+                            let idx = (iy * pw as usize + ix) * 4;
+                            let alpha = (coverage * color.a as f32) as u8;
+                            let pixels = pixmap.data_mut();
+                            pixels[idx] = blend(pixels[idx], color.r, alpha);
+                            pixels[idx + 1] = blend(pixels[idx + 1], color.g, alpha);
+                            pixels[idx + 2] = blend(pixels[idx + 2], color.b, alpha);
+                            pixels[idx + 3] = 255;
+                        }
+                    });
+                }
+                pen_x += advance + letter_spacing;
             }
         }
+
+        match text_decoration {
+            TextDecoration::Underline => {
+                let uy = pen_y + descent * 0.3;
+                draw_horizontal_line(pixmap, x + align_offset, uy, *line_w, color);
+            }
+            TextDecoration::LineThrough => {
+                let sty = pen_y - font_size * 0.25;
+                draw_horizontal_line(pixmap, x + align_offset, sty, *line_w, color);
+            }
+            TextDecoration::Overline => {
+                let oy = pen_y - ascent;
+                draw_horizontal_line(pixmap, x + align_offset, oy, *line_w, color);
+            }
+            TextDecoration::None => {}
+        }
+
+        pen_y += line_height_px;
     }
 }
 
-fn measure_word_width(
-    fonts: &FontBook,
-    word: &str,
-    font_size: f32,
-    letter_spacing: f32,
-) -> f32 {
+fn draw_horizontal_line(pixmap: &mut Pixmap, x: f32, y: f32, width: f32, color: Color) {
+    if width <= 0.0 || y < 0.0 || y as u32 >= pixmap.height() {
+        return;
+    }
+    let iy = y.round() as u32;
+    let start = x.max(0.0) as u32;
+    let end = (x + width).min(pixmap.width() as f32) as u32;
+    let pw = pixmap.width() as usize;
+    let pixels = pixmap.data_mut();
+    for ix in start..end {
+        let idx = (iy as usize * pw + ix as usize) * 4;
+        let alpha = color.a as u32;
+        pixels[idx] = blend(pixels[idx], color.r, alpha as u8);
+        pixels[idx + 1] = blend(pixels[idx + 1], color.g, alpha as u8);
+        pixels[idx + 2] = blend(pixels[idx + 2], color.b, alpha as u8);
+        pixels[idx + 3] = 255;
+    }
+}
+
+fn measure_word_width(fonts: &FontBook, word: &str, font_size: f32, letter_spacing: f32) -> f32 {
     word.chars()
         .map(|ch| fonts.h_advance(ch, font_size) + letter_spacing)
         .sum()
@@ -822,33 +930,43 @@ fn draw_border(
     }
 }
 
-fn draw_left_border(
+enum BorderSide {
+    Top,
+    Right,
+    Bottom,
+    Left,
+}
+
+fn draw_side_border(
     pixmap: &mut Pixmap,
     x: f32,
     y: f32,
     w: f32,
     h: f32,
     width: f32,
-    radius: f32,
     color: Color,
+    side: BorderSide,
 ) {
-    if width <= 0.0 || h <= 0.0 {
+    if width <= 0.0 || w <= 0.0 || h <= 0.0 {
         return;
     }
 
-    let min_x = x.max(0.0).floor() as i32;
-    let min_y = y.max(0.0).floor() as i32;
-    let max_x = (x + width).min(pixmap.width() as f32).ceil() as i32;
-    let max_y = (y + h).min(pixmap.height() as f32).ceil() as i32;
+    let (rx, ry, rw, rh) = match side {
+        BorderSide::Top => (x, y, w, width),
+        BorderSide::Bottom => (x, y + h - width, w, width),
+        BorderSide::Left => (x, y, width, h),
+        BorderSide::Right => (x + w - width, y, width, h),
+    };
+
+    let min_x = rx.max(0.0).floor() as i32;
+    let min_y = ry.max(0.0).floor() as i32;
+    let max_x = (rx + rw).min(pixmap.width() as f32).ceil() as i32;
+    let max_y = (ry + rh).min(pixmap.height() as f32).ceil() as i32;
     let pw = pixmap.width() as usize;
 
     for py in min_y..max_y {
         for px in min_x..max_x {
-            let fx = px as f32 + 0.5;
-            let fy = py as f32 + 0.5;
-            if inside_rounded_rect(fx, fy, x, y, w, h, radius) {
-                blend_pixel(pixmap.data_mut(), pw, px as usize, py as usize, color);
-            }
+            blend_pixel(pixmap.data_mut(), pw, px as usize, py as usize, color);
         }
     }
 }

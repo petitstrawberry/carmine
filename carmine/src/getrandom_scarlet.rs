@@ -1,4 +1,4 @@
-use scarlet_sys::{syscall3, Syscall};
+use scarlet_sys::{Syscall, syscall3};
 
 const SYSCALL_ERROR: usize = usize::MAX;
 

@@ -43,6 +43,7 @@ impl LayoutNode {
 struct TextMeasureData {
     text: String,
     font_size: f32,
+    line_height_px: f32,
 }
 
 struct TaffyLink<'a> {
@@ -76,7 +77,13 @@ pub fn layout_with_images(
         link.taffy_id,
         available,
         |known, avail, _id, context, _style| match context {
-            Some(data) => measure_text(&data.text, data.font_size, known, avail),
+            Some(data) => measure_text(
+                &data.text,
+                data.font_size,
+                data.line_height_px,
+                known,
+                avail,
+            ),
             None => Size::ZERO,
         },
     )
@@ -97,9 +104,14 @@ fn inject_images(
 ) {
     if let Some(ref src) = link.styled.img_src {
         if let Some(img) = load_image_for_layout(src, loader) {
-            if node.width == 0.0 || node.height == 0.0 {
+            if node.width == 0.0 && node.height == 0.0 {
                 node.width = img.width as f32;
                 node.height = img.height as f32;
+            } else if node.width > 0.0 && node.height > 0.0 {
+            } else if node.width > 0.0 {
+                node.height = node.width * img.height as f32 / img.width as f32;
+            } else if node.height > 0.0 {
+                node.width = node.height * img.width as f32 / img.height as f32;
             }
             node.image = Some(img);
         }
@@ -115,6 +127,17 @@ fn build_taffy_tree<'a>(
     vw: f32,
     vh: f32,
     containing_content_width: Option<f32>,
+) -> TaffyLink<'a> {
+    build_taffy_tree_inner(node, tree, vw, vh, containing_content_width, true)
+}
+
+fn build_taffy_tree_inner<'a>(
+    node: &'a StyledNode,
+    tree: &mut TaffyTree<TextMeasureData>,
+    vw: f32,
+    vh: f32,
+    containing_content_width: Option<f32>,
+    parent_stretches: bool,
 ) -> TaffyLink<'a> {
     if node.style.display == StyleDisplay::None {
         let id = tree
@@ -146,16 +169,11 @@ fn build_taffy_tree<'a>(
         })
         .collect();
 
-    let has_block_children = visible_children.iter().any(|c| {
-        matches!(
-            c.style.display,
-            StyleDisplay::Block
-                | StyleDisplay::Flex
-                | StyleDisplay::InlineFlex
-                | StyleDisplay::Grid
-                | StyleDisplay::InlineGrid
-        )
-    });
+    let has_natural_block_children = visible_children
+        .iter()
+        .any(|c| !is_naturally_inline_kind(&c.kind));
+
+    let has_block_children = has_natural_block_children;
     let has_element_children = visible_children
         .iter()
         .any(|c| matches!(c.kind, StyledKind::Element { .. }));
@@ -166,9 +184,13 @@ fn build_taffy_tree<'a>(
             | StyleDisplay::Grid
             | StyleDisplay::InlineGrid
     );
-    let should_collapse_inline_text = !has_block_children
-        && (!is_flex_or_grid_container || !has_element_children)
-        && !visible_children.is_empty();
+    let should_collapse_inline_text =
+        !has_block_children && !has_element_children && !visible_children.is_empty();
+
+    let self_stretches = matches!(
+        node.style.align_items,
+        crate::render::style::AlignItems::Stretch | crate::render::style::AlignItems::Unspecified
+    );
 
     if should_collapse_inline_text {
         let text = collapse_html_whitespace(&collect_inline_text(node));
@@ -176,12 +198,14 @@ fn build_taffy_tree<'a>(
             let ctx = TextMeasureData {
                 text: text.clone(),
                 font_size: node.style.font_size,
+                line_height_px: node.style.line_height.resolve_px(node.style.font_size),
             };
+            let mut style = to_taffy_style_for_node(node, vw, vh, node_content_width);
+            if parent_stretches && matches!(node.style.display, StyleDisplay::Inline) {
+                style.align_self = Some(taffy::style::AlignItems::FlexStart);
+            }
             let id = tree
-                .new_leaf_with_context(
-                    to_taffy_style_for_node(node, vw, vh, node_content_width),
-                    ctx,
-                )
+                .new_leaf_with_context(style, ctx)
                 .expect("taffy new_leaf_with_context");
             return TaffyLink {
                 styled: node,
@@ -193,22 +217,22 @@ fn build_taffy_tree<'a>(
     }
 
     if visible_children.is_empty() {
+        let mut leaf_style = to_taffy_style_for_node(node, vw, vh, node_content_width);
+        if parent_stretches && matches!(node.style.display, StyleDisplay::Inline) {
+            leaf_style.align_self = Some(taffy::style::AlignItems::FlexStart);
+        }
         let id = match &node.kind {
             StyledKind::Text(text) => {
                 let text = collapse_html_whitespace(text);
                 let ctx = TextMeasureData {
                     text,
                     font_size: node.style.font_size,
+                    line_height_px: node.style.line_height.resolve_px(node.style.font_size),
                 };
-                tree.new_leaf_with_context(
-                    to_taffy_style_for_node(node, vw, vh, node_content_width),
-                    ctx,
-                )
-                .expect("taffy new_leaf_with_context")
+                tree.new_leaf_with_context(leaf_style, ctx)
+                    .expect("taffy new_leaf_with_context")
             }
-            _ => tree
-                .new_leaf(to_taffy_style_for_node(node, vw, vh, node_content_width))
-                .expect("taffy new_leaf"),
+            _ => tree.new_leaf(leaf_style).expect("taffy new_leaf"),
         };
         TaffyLink {
             styled: node,
@@ -217,16 +241,52 @@ fn build_taffy_tree<'a>(
             text: None,
         }
     } else {
-        let children: Vec<TaffyLink> = visible_children
-            .iter()
-            .map(|c| build_taffy_tree(c, tree, vw, vh, node_content_width))
-            .collect();
+        let needs_inline_grouping = has_block_children
+            && visible_children
+                .iter()
+                .any(|c| is_naturally_inline_kind(&c.kind))
+            && matches!(
+                node.style.display,
+                StyleDisplay::Block | StyleDisplay::Inline
+            );
+
+        let children: Vec<TaffyLink> = if needs_inline_grouping {
+            group_children_for_block_layout(
+                &visible_children,
+                tree,
+                vw,
+                vh,
+                node_content_width,
+                self_stretches,
+            )
+        } else {
+            visible_children
+                .iter()
+                .map(|c| {
+                    build_taffy_tree_inner(c, tree, vw, vh, node_content_width, self_stretches)
+                })
+                .collect()
+        };
+
+        let mut container_style = to_taffy_style_for_node(node, vw, vh, node_content_width);
+        if parent_stretches && matches!(node.style.display, StyleDisplay::Inline) {
+            container_style.align_self = Some(taffy::style::AlignItems::FlexStart);
+        }
+        if !has_block_children
+            && !needs_inline_grouping
+            && matches!(
+                node.style.display,
+                StyleDisplay::Block | StyleDisplay::Inline
+            )
+            && matches!(container_style.flex_direction, FlexDirection::Column)
+        {
+            container_style.flex_direction = FlexDirection::Row;
+            container_style.flex_wrap = taffy::style::FlexWrap::Wrap;
+        }
+
         let child_ids: Vec<NodeId> = children.iter().map(|c| c.taffy_id).collect();
         let id = tree
-            .new_with_children(
-                to_taffy_style_for_node(node, vw, vh, node_content_width),
-                &child_ids,
-            )
+            .new_with_children(container_style, &child_ids)
             .expect("taffy new_with_children");
         TaffyLink {
             styled: node,
@@ -235,6 +295,139 @@ fn build_taffy_tree<'a>(
             text: None,
         }
     }
+}
+
+fn group_children_for_block_layout<'a>(
+    children: &[&'a StyledNode],
+    tree: &mut TaffyTree<TextMeasureData>,
+    vw: f32,
+    vh: f32,
+    containing_width: Option<f32>,
+    parent_stretches: bool,
+) -> Vec<TaffyLink<'a>> {
+    let mut groups: Vec<TaffyLink<'a>> = Vec::new();
+    let mut inline_run: Vec<&StyledNode> = Vec::new();
+
+    for child in children {
+        if is_naturally_inline_kind(&child.kind) {
+            inline_run.push(child);
+        } else {
+            if !inline_run.is_empty() {
+                let run_links = inline_run
+                    .iter()
+                    .map(|c| {
+                        build_taffy_tree_inner(c, tree, vw, vh, containing_width, parent_stretches)
+                    })
+                    .collect::<Vec<_>>();
+                let run_ids: Vec<NodeId> = run_links.iter().map(|c| c.taffy_id).collect();
+                let row_id = tree
+                    .new_with_children(
+                        TaffyStyle {
+                            display: TaffyDisplay::Flex,
+                            flex_direction: FlexDirection::Row,
+                            flex_wrap: taffy::style::FlexWrap::Wrap,
+                            ..Default::default()
+                        },
+                        &run_ids,
+                    )
+                    .expect("taffy new_with_children inline group");
+                groups.push(TaffyLink {
+                    styled: children.first().copied().unwrap_or(child),
+                    taffy_id: row_id,
+                    children: run_links,
+                    text: None,
+                });
+                inline_run.clear();
+            }
+            groups.push(build_taffy_tree_inner(
+                child,
+                tree,
+                vw,
+                vh,
+                containing_width,
+                parent_stretches,
+            ));
+        }
+    }
+
+    if !inline_run.is_empty() {
+        let run_links = inline_run
+            .iter()
+            .map(|c| build_taffy_tree_inner(c, tree, vw, vh, containing_width, parent_stretches))
+            .collect::<Vec<_>>();
+        let run_ids: Vec<NodeId> = run_links.iter().map(|c| c.taffy_id).collect();
+        let row_id = tree
+            .new_with_children(
+                TaffyStyle {
+                    display: TaffyDisplay::Flex,
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: taffy::style::FlexWrap::Wrap,
+                    ..Default::default()
+                },
+                &run_ids,
+            )
+            .expect("taffy new_with_children inline group");
+        groups.push(TaffyLink {
+            styled: children
+                .first()
+                .copied()
+                .unwrap_or(children.last().copied().unwrap()),
+            taffy_id: row_id,
+            children: run_links,
+            text: None,
+        });
+    }
+
+    groups
+}
+
+fn is_naturally_inline_kind(kind: &StyledKind) -> bool {
+    match kind {
+        StyledKind::Text(_) => true,
+        StyledKind::Element { tag } => is_naturally_inline_tag(tag),
+        StyledKind::Document => false,
+    }
+}
+
+fn is_naturally_inline_tag(tag: &str) -> bool {
+    matches!(
+        tag.to_lowercase().as_str(),
+        "a" | "abbr"
+            | "b"
+            | "bdi"
+            | "bdo"
+            | "br"
+            | "cite"
+            | "code"
+            | "dfn"
+            | "em"
+            | "i"
+            | "kbd"
+            | "label"
+            | "mark"
+            | "q"
+            | "rp"
+            | "rt"
+            | "ruby"
+            | "s"
+            | "samp"
+            | "small"
+            | "span"
+            | "strong"
+            | "sub"
+            | "sup"
+            | "time"
+            | "u"
+            | "var"
+            | "wbr"
+            | "img"
+            | "input"
+            | "button"
+            | "select"
+            | "textarea"
+            | "svg"
+            | "path"
+    )
 }
 
 fn collect_inline_text(node: &StyledNode) -> String {
@@ -388,12 +581,15 @@ fn to_taffy_style(s: &ComputedStyle, vw: f32, vh: f32) -> TaffyStyle {
         StyleFlexWrap::NoWrap | StyleFlexWrap::Unspecified => taffy::style::FlexWrap::NoWrap,
     };
 
+    let align_self = None;
+
     TaffyStyle {
         display,
         flex_direction,
         flex_wrap,
         justify_content: Some(justify_content),
         align_items: Some(align_items),
+        align_self,
         gap: Size {
             width: length_to_lp(s.gap, vw, vh),
             height: length_to_lp(s.gap, vw, vh),
@@ -769,11 +965,11 @@ fn length_to_dim(l: Length, vw: f32, vh: f32) -> taffy::style::Dimension {
 fn measure_text(
     text: &str,
     font_size: f32,
+    line_height_px: f32,
     known: Size<Option<f32>>,
     available: Size<AvailableSpace>,
 ) -> Size<f32> {
     let char_width = font_size * 0.55;
-    let line_height = font_size * 1.2;
 
     let avail_width = match available.width {
         AvailableSpace::Definite(w) => w,
@@ -782,7 +978,7 @@ fn measure_text(
 
     let (natural_width, line_count) = measure_wrapped_text(text, char_width, avail_width);
     let width = known.width.unwrap_or(natural_width.max(char_width));
-    let height = known.height.unwrap_or(line_height * line_count as f32);
+    let height = known.height.unwrap_or(line_height_px * line_count as f32);
 
     Size { width, height }
 }

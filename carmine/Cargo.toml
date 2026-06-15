@@ -7,7 +7,6 @@ description = "A small pure-Rust HTML/CSS browser"
 [features]
 default = ["scarlet"]
 scarlet = [
-    "dep:scarlet-os",
     "dep:scarlet-sys",
     "dep:scarlet-ui",
     "dep:scarlet-ui-macros",
@@ -18,7 +17,6 @@ carmine-core = { path = "../carmine-core" }
 clap = { version = "4", features = ["derive"] }
 url = "2"
 
-scarlet-os = { git = "https://github.com/petitstrawberry/Scarlet", package = "scarlet-os", optional = true }
 scarlet-sys = { git = "https://github.com/petitstrawberry/Scarlet", package = "scarlet-sys", optional = true }
 scarlet-ui = { git = "https://github.com/petitstrawberry/Scarlet", package = "scarlet-ui", default-features = false, features = ["std"], optional = true }
 scarlet-ui-macros = { git = "https://github.com/petitstrawberry/Scarlet", package = "scarlet-ui-macros", optional = true }
@@ -26,3 +24,9 @@ scraper = "0.27.0"
 ego-tree = "0.11.0"
 ureq = { version = "2", features = ["tls"] }
 getrandom = { version = "0.2", features = ["custom"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = "1"
+webpki-roots = "1"
+
+[target.'cfg(target_os = "scarlet")'.dependencies]
+scarlet-os = { git = "https://github.com/petitstrawberry/Scarlet", package = "scarlet-os" }
