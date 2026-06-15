@@ -1,7 +1,9 @@
-use taffy::geometry::{Rect, Size};
+use taffy::geometry::{Line, Rect, Size};
+use taffy::prelude::{TaffyGridLine, TaffyGridSpan};
 use taffy::style::{
-    AvailableSpace, Display as TaffyDisplay, FlexDirection, LengthPercentage, LengthPercentageAuto,
-    Style as TaffyStyle,
+    AvailableSpace, Display as TaffyDisplay, FlexDirection, GridPlacement, LengthPercentage,
+    LengthPercentageAuto, MaxTrackSizingFunction, MinTrackSizingFunction,
+    NonRepeatedTrackSizingFunction, Style as TaffyStyle, TrackSizingFunction,
 };
 use taffy::{NodeId, TaffyTree};
 
@@ -52,6 +54,7 @@ impl LayoutNode {
     }
 }
 
+#[derive(Clone)]
 struct TextMeasureData {
     text: String,
     inline_runs: Vec<InlineTextRun>,
@@ -59,6 +62,15 @@ struct TextMeasureData {
     line_height_px: f32,
     white_space: WhiteSpace,
     allow_wrap: bool,
+}
+
+#[derive(Clone)]
+enum MeasureData {
+    Text(TextMeasureData),
+    Image {
+        intrinsic_width: f32,
+        intrinsic_height: f32,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -73,6 +85,7 @@ struct TaffyLink<'a> {
     children: Vec<TaffyLink<'a>>,
     text: Option<String>,
     inline_runs: Vec<InlineTextRun>,
+    image: Option<LayoutImage>,
 }
 
 pub fn layout(root: &StyledNode, viewport_w: u32, viewport_h: u32) -> LayoutNode {
@@ -85,10 +98,12 @@ pub fn layout_with_images(
     viewport_h: u32,
     image_loader: Option<&Box<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>>,
 ) -> LayoutNode {
-    let mut tree: TaffyTree<TextMeasureData> = TaffyTree::new();
+    let mut tree: TaffyTree<MeasureData> = TaffyTree::new();
     let vw = viewport_w as f32;
     let vh = viewport_h as f32;
-    let link = build_taffy_tree(root, &mut tree, vw, vh, Some(vw));
+    let image_loader_dyn =
+        image_loader.map(|loader| loader.as_ref() as &dyn Fn(&str) -> Option<Vec<u8>>);
+    let link = build_taffy_tree(root, &mut tree, vw, vh, Some(vw), image_loader_dyn);
 
     let available = Size {
         width: AvailableSpace::Definite(vw),
@@ -99,7 +114,7 @@ pub fn layout_with_images(
         link.taffy_id,
         available,
         |known, avail, _id, context, _style| match context {
-            Some(data) => measure_text(
+            Some(MeasureData::Text(data)) => measure_text(
                 &data.text,
                 &data.inline_runs,
                 data.font_size,
@@ -109,15 +124,18 @@ pub fn layout_with_images(
                 known,
                 avail,
             ),
+            Some(MeasureData::Image {
+                intrinsic_width,
+                intrinsic_height,
+            }) => measure_image(*intrinsic_width, *intrinsic_height, known, avail),
             None => Size::ZERO,
         },
     )
     .expect("taffy layout failed");
 
     let mut root_layout = extract(&link, &tree, 0.0, 0.0);
-    if let Some(ref loader) = image_loader {
-        let l: &dyn Fn(&str) -> Option<Vec<u8>> = loader.as_ref();
-        inject_images(&mut root_layout, &link, l);
+    if let Some(loader) = image_loader_dyn {
+        inject_images(&mut root_layout, &link, loader);
     }
     root_layout
 }
@@ -127,20 +145,6 @@ fn inject_images(
     link: &TaffyLink,
     loader: &dyn Fn(&str) -> Option<Vec<u8>>,
 ) {
-    if let Some(ref src) = link.styled.img_src {
-        if let Some(img) = load_image_for_layout(src, loader) {
-            if node.width == 0.0 && node.height == 0.0 {
-                node.width = img.width as f32;
-                node.height = img.height as f32;
-            } else if node.width > 0.0 && node.height > 0.0 {
-            } else if node.width > 0.0 {
-                node.height = node.width * img.height as f32 / img.width as f32;
-            } else if node.height > 0.0 {
-                node.width = node.height * img.width as f32 / img.height as f32;
-            }
-            node.image = Some(img);
-        }
-    }
     if let Some(ref src) = link.styled.style.background_image_src {
         node.background_image = load_image_for_layout(src, loader);
     }
@@ -151,21 +155,31 @@ fn inject_images(
 
 fn build_taffy_tree<'a>(
     node: &'a StyledNode,
-    tree: &mut TaffyTree<TextMeasureData>,
+    tree: &mut TaffyTree<MeasureData>,
     vw: f32,
     vh: f32,
     containing_content_width: Option<f32>,
+    image_loader: Option<&dyn Fn(&str) -> Option<Vec<u8>>>,
 ) -> TaffyLink<'a> {
-    build_taffy_tree_inner(node, tree, vw, vh, containing_content_width, true)
+    build_taffy_tree_inner(
+        node,
+        tree,
+        vw,
+        vh,
+        containing_content_width,
+        true,
+        image_loader,
+    )
 }
 
 fn build_taffy_tree_inner<'a>(
     node: &'a StyledNode,
-    tree: &mut TaffyTree<TextMeasureData>,
+    tree: &mut TaffyTree<MeasureData>,
     vw: f32,
     vh: f32,
     containing_content_width: Option<f32>,
     parent_stretches: bool,
+    image_loader: Option<&dyn Fn(&str) -> Option<Vec<u8>>>,
 ) -> TaffyLink<'a> {
     if node.style.display == StyleDisplay::None {
         let id = tree
@@ -180,7 +194,24 @@ fn build_taffy_tree_inner<'a>(
             children: vec![],
             text: None,
             inline_runs: Vec::new(),
+            image: None,
         };
+    }
+
+    if let StyledKind::Element { tag } = &node.kind {
+        if tag.eq_ignore_ascii_case("table")
+            && node.style.display == StyleDisplay::Flex
+            && table_uses_legacy_presentational_layout(node)
+        {
+            return build_table_taffy_tree(
+                node,
+                tree,
+                vw,
+                vh,
+                containing_content_width,
+                image_loader,
+            );
+        }
     }
 
     let node_content_width = estimate_content_width(node, containing_content_width, vw, vh);
@@ -238,7 +269,7 @@ fn build_taffy_tree_inner<'a>(
                 style.flex_shrink = 0.0;
             }
             let id = tree
-                .new_leaf_with_context(style, ctx)
+                .new_leaf_with_context(style, MeasureData::Text(ctx))
                 .expect("taffy new_leaf_with_context");
             return TaffyLink {
                 styled: node,
@@ -246,6 +277,7 @@ fn build_taffy_tree_inner<'a>(
                 children: vec![],
                 text: Some(text),
                 inline_runs,
+                image: None,
             };
         }
     }
@@ -255,7 +287,7 @@ fn build_taffy_tree_inner<'a>(
         if parent_stretches && matches!(node.style.display, StyleDisplay::Inline) {
             leaf_style.align_self = Some(taffy::style::AlignItems::FlexStart);
         }
-        let id = match &node.kind {
+        let (id, image) = match &node.kind {
             StyledKind::Text(text) => {
                 let text = normalize_inline_text_node(text, node.style.white_space);
                 leaf_style.flex_shrink = 0.0;
@@ -270,10 +302,32 @@ fn build_taffy_tree_inner<'a>(
                     white_space: node.style.white_space,
                     allow_wrap: false,
                 };
-                tree.new_leaf_with_context(leaf_style, ctx)
-                    .expect("taffy new_leaf_with_context")
+                (
+                    tree.new_leaf_with_context(leaf_style, MeasureData::Text(ctx))
+                        .expect("taffy new_leaf_with_context"),
+                    None,
+                )
             }
-            _ => tree.new_leaf(leaf_style).expect("taffy new_leaf"),
+            _ if node.img_src.is_some() => {
+                let image = node.img_src.as_ref().and_then(|src| {
+                    image_loader.and_then(|loader| load_image_for_layout(src, loader))
+                });
+                if let Some(image) = image {
+                    let id = tree
+                        .new_leaf_with_context(
+                            leaf_style,
+                            MeasureData::Image {
+                                intrinsic_width: image.width as f32,
+                                intrinsic_height: image.height as f32,
+                            },
+                        )
+                        .expect("taffy image leaf");
+                    (id, Some(image))
+                } else {
+                    (tree.new_leaf(leaf_style).expect("taffy new_leaf"), None)
+                }
+            }
+            _ => (tree.new_leaf(leaf_style).expect("taffy new_leaf"), None),
         };
         TaffyLink {
             styled: node,
@@ -281,6 +335,7 @@ fn build_taffy_tree_inner<'a>(
             children: vec![],
             text: None,
             inline_runs: Vec::new(),
+            image,
         }
     } else {
         let needs_inline_grouping = has_block_children
@@ -300,12 +355,21 @@ fn build_taffy_tree_inner<'a>(
                 vh,
                 node_content_width,
                 self_stretches,
+                image_loader,
             )
         } else {
             visible_children
                 .iter()
                 .map(|c| {
-                    build_taffy_tree_inner(c, tree, vw, vh, node_content_width, self_stretches)
+                    build_taffy_tree_inner(
+                        c,
+                        tree,
+                        vw,
+                        vh,
+                        node_content_width,
+                        self_stretches,
+                        image_loader,
+                    )
                 })
                 .collect()
         };
@@ -338,17 +402,19 @@ fn build_taffy_tree_inner<'a>(
             children,
             text: None,
             inline_runs: Vec::new(),
+            image: None,
         }
     }
 }
 
 fn group_children_for_block_layout<'a>(
     children: &[&'a StyledNode],
-    tree: &mut TaffyTree<TextMeasureData>,
+    tree: &mut TaffyTree<MeasureData>,
     vw: f32,
     vh: f32,
     containing_width: Option<f32>,
     parent_stretches: bool,
+    image_loader: Option<&dyn Fn(&str) -> Option<Vec<u8>>>,
 ) -> Vec<TaffyLink<'a>> {
     let mut groups: Vec<TaffyLink<'a>> = Vec::new();
     let mut inline_run: Vec<&StyledNode> = Vec::new();
@@ -361,7 +427,15 @@ fn group_children_for_block_layout<'a>(
                 let run_links = inline_run
                     .iter()
                     .map(|c| {
-                        build_taffy_tree_inner(c, tree, vw, vh, containing_width, parent_stretches)
+                        build_taffy_tree_inner(
+                            c,
+                            tree,
+                            vw,
+                            vh,
+                            containing_width,
+                            parent_stretches,
+                            image_loader,
+                        )
                     })
                     .collect::<Vec<_>>();
                 let run_ids: Vec<NodeId> = run_links.iter().map(|c| c.taffy_id).collect();
@@ -384,6 +458,7 @@ fn group_children_for_block_layout<'a>(
                     children: run_links,
                     text: None,
                     inline_runs: Vec::new(),
+                    image: None,
                 });
                 inline_run.clear();
             }
@@ -394,6 +469,7 @@ fn group_children_for_block_layout<'a>(
                 vh,
                 containing_width,
                 parent_stretches,
+                image_loader,
             ));
         }
     }
@@ -401,7 +477,17 @@ fn group_children_for_block_layout<'a>(
     if !inline_run.is_empty() {
         let run_links = inline_run
             .iter()
-            .map(|c| build_taffy_tree_inner(c, tree, vw, vh, containing_width, parent_stretches))
+            .map(|c| {
+                build_taffy_tree_inner(
+                    c,
+                    tree,
+                    vw,
+                    vh,
+                    containing_width,
+                    parent_stretches,
+                    image_loader,
+                )
+            })
             .collect::<Vec<_>>();
         let run_ids: Vec<NodeId> = run_links.iter().map(|c| c.taffy_id).collect();
         let row_id = tree
@@ -426,6 +512,7 @@ fn group_children_for_block_layout<'a>(
             children: run_links,
             text: None,
             inline_runs: Vec::new(),
+            image: None,
         });
     }
 
@@ -662,7 +749,7 @@ fn normalize_inline_text_node(text: &str, white_space: WhiteSpace) -> String {
 
 fn extract(
     link: &TaffyLink,
-    tree: &TaffyTree<TextMeasureData>,
+    tree: &TaffyTree<MeasureData>,
     parent_x: f32,
     parent_y: f32,
 ) -> LayoutNode {
@@ -709,10 +796,45 @@ fn extract(
         pseudo_after: link.styled.pseudo_after.clone(),
         text,
         inline_fragments,
-        image: None,
+        image: link.image.clone(),
         background_image: None,
         children,
     }
+}
+
+fn measure_image(
+    intrinsic_width: f32,
+    intrinsic_height: f32,
+    known: Size<Option<f32>>,
+    available: Size<AvailableSpace>,
+) -> Size<f32> {
+    if intrinsic_width <= 0.0 || intrinsic_height <= 0.0 {
+        return Size::ZERO;
+    }
+
+    let aspect = intrinsic_height / intrinsic_width;
+    let avail_width = match available.width {
+        AvailableSpace::Definite(w) => Some(w),
+        _ => None,
+    };
+
+    let (mut width, mut height) = match (known.width, known.height) {
+        (Some(w), Some(h)) => (w, h),
+        (Some(w), None) => (w, w * aspect),
+        (None, Some(h)) => (h / aspect, h),
+        (None, None) => (intrinsic_width, intrinsic_height),
+    };
+
+    if known.width.is_none() {
+        if let Some(max_width) = avail_width {
+            if width > max_width && max_width > 0.0 {
+                width = max_width;
+                height = width * aspect;
+            }
+        }
+    }
+
+    Size { width, height }
 }
 
 fn load_image_for_layout(
@@ -1444,6 +1566,312 @@ fn measure_wrapped_text(text: &str, char_width: f32, max_width: f32) -> (f32, us
 
     max_line_width = max_line_width.max(line_width).min(max_width);
     (max_line_width, lines)
+}
+
+fn build_table_taffy_tree<'a>(
+    node: &'a StyledNode,
+    tree: &mut TaffyTree<MeasureData>,
+    vw: f32,
+    vh: f32,
+    containing_content_width: Option<f32>,
+    image_loader: Option<&dyn Fn(&str) -> Option<Vec<u8>>>,
+) -> TaffyLink<'a> {
+    let model = compute_table_grid_model(node);
+    let node_content_width = estimate_content_width(node, containing_content_width, vw, vh);
+
+    let mut table_style = to_taffy_style_for_node(node, vw, vh, node_content_width);
+    table_style.display = TaffyDisplay::Grid;
+    table_style.grid_template_columns = build_grid_template_columns(&model);
+    table_style.grid_auto_rows = Vec::new();
+    table_style.grid_auto_columns = Vec::new();
+
+    let mut child_links: Vec<TaffyLink<'a>> = Vec::with_capacity(model.cells.len());
+    for cell in &model.cells {
+        let cell_node = cell.node;
+        let cell_content_width = estimate_table_cell_width(&model, cell, node_content_width);
+        let cell_grid_column = Line {
+            start: GridPlacement::from_line_index((cell.column + 1) as i16),
+            end: GridPlacement::from_span(cell.colspan as u16),
+        };
+        let cell_grid_row = Line {
+            start: GridPlacement::from_line_index((cell.row + 1) as i16),
+            end: GridPlacement::from_span(cell.rowspan as u16),
+        };
+
+        let cell_link = build_taffy_tree_inner(
+            cell_node,
+            tree,
+            vw,
+            vh,
+            cell_content_width,
+            true,
+            image_loader,
+        );
+        let new_link = TaffyLink {
+            styled: cell_node,
+            taffy_id: cell_link.taffy_id,
+            children: cell_link.children,
+            text: cell_link.text,
+            inline_runs: cell_link.inline_runs,
+            image: cell_link.image,
+        };
+
+        if let Ok(mut real_style) = tree.style(new_link.taffy_id).cloned() {
+            real_style.grid_column = cell_grid_column;
+            real_style.grid_row = cell_grid_row;
+            real_style.display = TaffyDisplay::Flex;
+            real_style.flex_direction = FlexDirection::Column;
+            real_style.align_items = Some(taffy::style::AlignItems::FlexStart);
+            if let Some(width) = cell_content_width {
+                if cell_node.style.width.is_auto() {
+                    real_style.size.width = taffy::style::Dimension::Length(width.max(0.0));
+                }
+            }
+            tree.set_style(new_link.taffy_id, real_style)
+                .expect("taffy set_style for table cell");
+        }
+        child_links.push(new_link);
+    }
+
+    let child_ids: Vec<NodeId> = child_links.iter().map(|c| c.taffy_id).collect();
+    let id = tree
+        .new_with_children(table_style, &child_ids)
+        .expect("taffy table grid node");
+
+    TaffyLink {
+        styled: node,
+        taffy_id: id,
+        children: child_links,
+        text: None,
+        inline_runs: Vec::new(),
+        image: None,
+    }
+}
+
+struct TableCellPlacement<'a> {
+    node: &'a StyledNode,
+    row: usize,
+    column: usize,
+    rowspan: usize,
+    colspan: usize,
+}
+
+struct TableGridModel<'a> {
+    cells: Vec<TableCellPlacement<'a>>,
+    column_count: usize,
+    first_row_widths: Vec<Option<Length>>,
+}
+
+fn compute_table_grid_model<'a>(table: &'a StyledNode) -> TableGridModel<'a> {
+    let rows = collect_table_rows(table);
+    let mut occupied: Vec<Vec<bool>> = Vec::new();
+    let mut cells: Vec<TableCellPlacement<'a>> = Vec::new();
+    let mut column_count = 0usize;
+    let mut first_row_widths: Vec<Option<Length>> = Vec::new();
+
+    for (y, row_node) in rows.iter().enumerate() {
+        while occupied.len() <= y {
+            occupied.push(Vec::new());
+        }
+        let mut x = 0usize;
+
+        for cell_node in row_node.children.iter().filter(|c| is_table_cell(c)) {
+            while occupied
+                .get(y)
+                .is_some_and(|row| row.get(x).copied().unwrap_or(false))
+            {
+                x += 1;
+            }
+
+            let colspan = cell_node.style.table_colspan.max(1) as usize;
+            let rowspan = cell_node.style.table_rowspan.max(1) as usize;
+
+            for dy in 0..rowspan {
+                let ry = y + dy;
+                while occupied.len() <= ry {
+                    occupied.push(Vec::new());
+                }
+                let row_slots = &mut occupied[ry];
+                while row_slots.len() < x + colspan {
+                    row_slots.push(false);
+                }
+                for dx in 0..colspan {
+                    row_slots[x + dx] = true;
+                }
+            }
+
+            if y == 0 {
+                while first_row_widths.len() < x + colspan {
+                    first_row_widths.push(None);
+                }
+                let width = cell_width_hint(cell_node);
+                if let Some(w) = width {
+                    let share = match (w, colspan) {
+                        (Length::Px(v), n) if n > 1 => Length::Px(v / n as f32),
+                        (Length::Percent(v), n) if n > 1 => Length::Percent(v / n as f32),
+                        (other, _) => other,
+                    };
+                    for dx in 0..colspan {
+                        first_row_widths[x + dx] = Some(share);
+                    }
+                }
+            }
+
+            column_count = column_count.max(x + colspan);
+            cells.push(TableCellPlacement {
+                node: cell_node,
+                row: y,
+                column: x,
+                rowspan,
+                colspan,
+            });
+            x += colspan;
+        }
+    }
+
+    TableGridModel {
+        cells,
+        column_count,
+        first_row_widths,
+    }
+}
+
+fn collect_table_rows<'a>(table: &'a StyledNode) -> Vec<&'a StyledNode> {
+    let mut rows = Vec::new();
+    for child in &table.children {
+        if let StyledKind::Element { tag } = &child.kind {
+            let t = tag.to_ascii_lowercase();
+            if t == "tr" {
+                rows.push(child);
+            } else if t == "thead" || t == "tbody" || t == "tfoot" {
+                for gc in &child.children {
+                    if let StyledKind::Element { tag } = &gc.kind {
+                        if tag.eq_ignore_ascii_case("tr") {
+                            rows.push(gc);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    rows
+}
+
+fn is_table_cell(node: &StyledNode) -> bool {
+    if node.style.display == StyleDisplay::None {
+        return false;
+    }
+    matches!(
+        &node.kind,
+        StyledKind::Element { tag } if tag.eq_ignore_ascii_case("td") || tag.eq_ignore_ascii_case("th")
+    )
+}
+
+fn cell_width_hint(node: &StyledNode) -> Option<Length> {
+    if node.style.width.is_auto() || node.style.width == Length::Zero {
+        None
+    } else {
+        Some(node.style.width)
+    }
+}
+
+fn estimate_table_cell_width(
+    model: &TableGridModel,
+    cell: &TableCellPlacement,
+    table_content_width: Option<f32>,
+) -> Option<f32> {
+    let table_width = table_content_width?;
+    let columns = model.column_count.max(1) as f32;
+
+    let hinted_width: f32 = model
+        .first_row_widths
+        .iter()
+        .take(model.column_count)
+        .filter_map(|hint| hint.as_ref())
+        .map(|length| match length {
+            Length::Px(v) => *v,
+            _ => 0.0,
+        })
+        .sum();
+
+    let hinted_width = hinted_width.min(table_width).max(0.0);
+    let remaining_columns = model
+        .first_row_widths
+        .iter()
+        .take(model.column_count)
+        .filter(|hint| hint.is_none())
+        .count()
+        .max(1) as f32;
+    let auto_column_width = ((table_width - hinted_width).max(0.0)) / remaining_columns;
+
+    let mut width = 0.0f32;
+    for column in cell.column..(cell.column + cell.colspan).min(model.column_count) {
+        width += match model
+            .first_row_widths
+            .get(column)
+            .and_then(|hint| hint.as_ref())
+        {
+            Some(Length::Px(v)) => *v,
+            Some(Length::Percent(v)) => table_width * *v,
+            _ => auto_column_width.max(table_width / columns),
+        };
+    }
+
+    Some(width.max(table_width / columns))
+}
+
+fn table_has_spans(table: &StyledNode) -> bool {
+    collect_table_rows(table).into_iter().any(|row| {
+        row.children.iter().any(|cell| {
+            is_table_cell(cell) && (cell.style.table_colspan > 1 || cell.style.table_rowspan > 1)
+        })
+    })
+}
+
+fn table_uses_legacy_presentational_layout(table: &StyledNode) -> bool {
+    if table_has_spans(table)
+        || !table.style.width.is_auto()
+        || table.style.gap != Length::Zero
+        || table.style.padding_left != Length::Zero
+        || table.style.padding_right != Length::Zero
+        || table.style.padding_top != Length::Zero
+        || table.style.padding_bottom != Length::Zero
+    {
+        return true;
+    }
+
+    collect_table_rows(table).into_iter().any(|row| {
+        row.children.iter().any(|cell| {
+            is_table_cell(cell)
+                && (!cell.style.width.is_auto()
+                    || cell.style.padding_left != Length::Zero
+                    || cell.style.padding_right != Length::Zero)
+        })
+    })
+}
+
+fn build_grid_template_columns(model: &TableGridModel) -> Vec<TrackSizingFunction> {
+    let count = model.column_count.max(1);
+    (0..count)
+        .map(|i| {
+            if let Some(Some(width)) = model.first_row_widths.get(i) {
+                let lp = match width {
+                    Length::Px(v) => LengthPercentage::Length(*v),
+                    Length::Percent(v) => LengthPercentage::Percent(*v),
+                    _ => LengthPercentage::Length(0.0),
+                };
+                TrackSizingFunction::Single(NonRepeatedTrackSizingFunction {
+                    min: MinTrackSizingFunction::Fixed(lp),
+                    max: MaxTrackSizingFunction::Auto,
+                })
+            } else {
+                TrackSizingFunction::Single(NonRepeatedTrackSizingFunction {
+                    min: MinTrackSizingFunction::Auto,
+                    max: MaxTrackSizingFunction::Auto,
+                })
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

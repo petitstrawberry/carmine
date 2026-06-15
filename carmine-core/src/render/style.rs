@@ -147,6 +147,8 @@ pub struct ComputedStyle {
     pub img_src: Option<String>,
     pub img_width: Option<u32>,
     pub img_height: Option<u32>,
+    pub table_colspan: u16,
+    pub table_rowspan: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -717,6 +719,12 @@ fn apply_html_attributes(tag: &str, el: &scraper::node::Element, style: &mut Com
         }
         "td" | "th" => {
             apply_html_box_dimensions(el, style);
+            if let Some(colspan) = el.attr("colspan").and_then(parse_span_value) {
+                style.table_colspan = colspan;
+            }
+            if let Some(rowspan) = el.attr("rowspan").and_then(parse_span_value) {
+                style.table_rowspan = rowspan;
+            }
             if el.attr("nowrap").is_some() {
                 style.white_space = WhiteSpace::Nowrap;
             }
@@ -750,6 +758,12 @@ fn parse_html_length_attr(value: &str) -> Option<Length> {
     }
     let number = value.parse::<f32>().ok()?;
     Some(Length::px(number.max(0.0)))
+}
+
+fn parse_span_value(value: &str) -> Option<u16> {
+    let value = value.trim().trim_matches(|ch| ch == '"' || ch == '\'');
+    let parsed = value.parse::<u16>().ok()?;
+    Some(parsed.max(1))
 }
 
 fn apply_legacy_background_attrs(el: &scraper::node::Element, style: &mut ComputedStyle) {
@@ -874,6 +888,8 @@ fn default_block() -> ComputedStyle {
         img_src: None,
         img_width: None,
         img_height: None,
+        table_colspan: 1,
+        table_rowspan: 1,
     }
 }
 

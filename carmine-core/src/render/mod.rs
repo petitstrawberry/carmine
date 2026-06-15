@@ -238,4 +238,56 @@ mod tests {
         assert_eq!(rendered_text(items[0]), "Architecture: RISC-V 64-bit");
         assert_eq!(rendered_text(items[1]), "Process: httpd");
     }
+
+    #[test]
+    fn table_grid_layout_cells_do_not_overlap() {
+        let root = render_layout(
+            r#"<!doctype html><table><tr><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table>"#,
+            400,
+            300,
+        );
+        let mut tds = Vec::new();
+        collect_by_tag(&root, "td", &mut tds);
+        assert!(tds.len() >= 4, "expected 4 cells, got {}", tds.len());
+
+        let a = &tds[0];
+        let b = &tds[1];
+        let c = &tds[2];
+        assert!(
+            b.x >= a.x + a.width,
+            "col1 and col2 should not overlap: a.x={} a.w={} b.x={}",
+            a.x,
+            a.width,
+            b.x
+        );
+        assert!(
+            c.y >= a.y + a.height,
+            "row1 and row2 should not overlap: a.y={} a.h={} c.y={}",
+            a.y,
+            a.height,
+            c.y
+        );
+    }
+
+    #[test]
+    fn table_grid_colspan_spans_multiple_columns() {
+        let root = render_layout(
+            r#"<!doctype html><table>
+            <tr><td>a</td><td>b</td><td>c</td></tr>
+            <tr><td colspan="2">wide</td><td>d</td></tr>
+            </table>"#,
+            400,
+            300,
+        );
+        let mut tds = Vec::new();
+        collect_by_tag(&root, "td", &mut tds);
+        assert!(tds.len() >= 5, "expected 5 cells, got {}", tds.len());
+        let wide = &tds[3];
+        assert!(
+            wide.width > tds[0].width * 1.5,
+            "colspan=2 cell should be wider: wide={} col0={}",
+            wide.width,
+            tds[0].width
+        );
+    }
 }
