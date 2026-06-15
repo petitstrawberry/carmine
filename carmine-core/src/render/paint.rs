@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use ab_glyph::{Font, FontVec, Glyph, ScaleFont};
+use ab_glyph::{Font, FontVec, Glyph, OutlinedGlyph, ScaleFont};
 use tiny_skia::{Color as SkColor, Paint, PathBuilder, Pixmap, Rect};
 
 use crate::render::layout::LayoutNode;
@@ -222,7 +222,45 @@ fn paint_node(node: &LayoutNode, pixmap: &mut Pixmap, scale: f32) {
         draw_image(pixmap, img, x, y, w, h);
     }
 
-    if let Some(ref text) = node.text {
+    if !node.inline_fragments.is_empty() {
+        let pseudo_offset = inline_pseudo_offset(node, pixmap.width() as f32 / scale);
+        let marker_offset = if node.tag.as_deref() == Some("li") {
+            node.style.font_size * scale * 1.2
+        } else {
+            pseudo_offset
+        };
+        let mut current_line_y: Option<f32> = None;
+        let mut pen_x = x + padding_left + bw + marker_offset;
+        for fragment in &node.inline_fragments {
+            let line_y = fragment.y * scale;
+            if current_line_y != Some(line_y) {
+                current_line_y = Some(line_y);
+                pen_x = x + padding_left + bw + marker_offset + fragment.x * scale;
+            }
+            let display_text = match fragment.style.text_transform {
+                crate::render::style::TextTransform::Uppercase => fragment.text.to_uppercase(),
+                crate::render::style::TextTransform::Lowercase => fragment.text.to_lowercase(),
+                _ => fragment.text.clone(),
+            };
+            let advance = draw_text_run(
+                pixmap,
+                &display_text,
+                pen_x,
+                y + padding_top + bw + line_y,
+                fragment.style.font_size * scale,
+                fragment.style.color,
+                fragment.style.letter_spacing * scale,
+                fragment
+                    .style
+                    .line_height
+                    .resolve_px(fragment.style.font_size)
+                    * scale,
+                fragment.style.text_decoration,
+                fragment.style.font_weight,
+            );
+            pen_x += advance;
+        }
+    } else if let Some(ref text) = node.text {
         let display_text = match node.style.text_transform {
             crate::render::style::TextTransform::Uppercase => text.to_uppercase(),
             crate::render::style::TextTransform::Lowercase => text.to_lowercase(),
@@ -317,6 +355,17 @@ fn paint_pseudo(
     } else {
         fill_background(pixmap, x, y, w, h, pseudo.border_radius * scale, bg, scale);
     }
+}
+
+fn inline_pseudo_offset(node: &LayoutNode, viewport_w: f32) -> f32 {
+    let Some(ref pseudo) = node.pseudo_before else {
+        return 0.0;
+    };
+    let pseudo_w = pseudo.width.resolve_px(node.width, viewport_w);
+    if pseudo_w <= 0.0 {
+        return 0.0;
+    }
+    pseudo_w + node.style.gap.resolve_px(node.width, viewport_w)
 }
 
 fn draw_text(
@@ -464,6 +513,92 @@ fn draw_text(
 
         pen_y += line_height_px;
     }
+}
+
+fn draw_text_run(
+    pixmap: &mut Pixmap,
+    text: &str,
+    x: f32,
+    y: f32,
+    font_size: f32,
+    color: Color,
+    letter_spacing: f32,
+    line_height_px: f32,
+    text_decoration: TextDecoration,
+    font_weight: u32,
+) -> f32 {
+    let Some(fonts) = get_fonts() else {
+        draw_text_placeholder(pixmap, text, x, y, font_size, color);
+        return font_size * 0.6 * text.chars().count() as f32;
+    };
+
+    let ascent = fonts.ascent(font_size);
+    let descent = font_size - ascent;
+    let pw = pixmap.width();
+    let ph = pixmap.height();
+    let mut pen_x = x;
+    let pen_y = y + ascent;
+
+    for ch in text.chars() {
+        let Some(font_idx) = fonts.glyph_font_index(ch, font_size) else {
+            continue;
+        };
+        let scaled = fonts.fonts[font_idx].as_scaled(font_size);
+        let glyph_id = scaled.glyph_id(ch);
+        let advance = scaled.h_advance(glyph_id);
+        let glyph: Glyph = glyph_id.with_scale_and_position(font_size, (pen_x, pen_y));
+        if let Some(outlined) = scaled.outline_glyph(glyph) {
+            draw_outlined_glyph(pixmap, &outlined, color, 0.0, 0.0, pw, ph);
+            if font_weight >= 600 {
+                draw_outlined_glyph(pixmap, &outlined, color, 0.45, 0.0, pw, ph);
+            }
+        }
+        pen_x += advance + letter_spacing;
+    }
+
+    let width = pen_x - x;
+    match text_decoration {
+        TextDecoration::Underline => {
+            draw_horizontal_line(pixmap, x, pen_y + descent * 0.3, width, color)
+        }
+        TextDecoration::LineThrough => {
+            draw_horizontal_line(pixmap, x, pen_y - font_size * 0.25, width, color)
+        }
+        TextDecoration::Overline => draw_horizontal_line(pixmap, x, pen_y - ascent, width, color),
+        TextDecoration::None => {}
+    }
+
+    let _ = line_height_px;
+    width
+}
+
+fn draw_outlined_glyph(
+    pixmap: &mut Pixmap,
+    outlined: &OutlinedGlyph,
+    color: Color,
+    offset_x: f32,
+    offset_y: f32,
+    pixmap_width: u32,
+    pixmap_height: u32,
+) {
+    let bounds = outlined.px_bounds();
+    let px0 = bounds.min.x + offset_x;
+    let py0 = bounds.min.y + offset_y;
+    outlined.draw(|gx: u32, gy: u32, coverage: f32| {
+        let px = px0 + gx as f32;
+        let py = py0 + gy as f32;
+        if px >= 0.0 && py >= 0.0 && px < pixmap_width as f32 && py < pixmap_height as f32 {
+            let ix = px as usize;
+            let iy = py as usize;
+            let idx = (iy * pixmap_width as usize + ix) * 4;
+            let alpha = (coverage * color.a as f32) as u8;
+            let pixels = pixmap.data_mut();
+            pixels[idx] = blend(pixels[idx], color.r, alpha);
+            pixels[idx + 1] = blend(pixels[idx + 1], color.g, alpha);
+            pixels[idx + 2] = blend(pixels[idx + 2], color.b, alpha);
+            pixels[idx + 3] = 255;
+        }
+    });
 }
 
 fn draw_horizontal_line(pixmap: &mut Pixmap, x: f32, y: f32, width: f32, color: Color) {

@@ -20,8 +20,19 @@ pub struct LayoutNode {
     pub pseudo_before: Option<ComputedStyle>,
     pub pseudo_after: Option<ComputedStyle>,
     pub text: Option<String>,
+    pub inline_fragments: Vec<LayoutTextFragment>,
     pub image: Option<LayoutImage>,
     pub children: Vec<LayoutNode>,
+}
+
+#[derive(Clone, Debug)]
+pub struct LayoutTextFragment {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub text: String,
+    pub style: ComputedStyle,
 }
 
 #[derive(Clone, Debug)]
@@ -42,9 +53,17 @@ impl LayoutNode {
 
 struct TextMeasureData {
     text: String,
+    inline_runs: Vec<InlineTextRun>,
     font_size: f32,
     line_height_px: f32,
     white_space: WhiteSpace,
+    allow_wrap: bool,
+}
+
+#[derive(Clone, Debug)]
+struct InlineTextRun {
+    text: String,
+    style: ComputedStyle,
 }
 
 struct TaffyLink<'a> {
@@ -52,6 +71,7 @@ struct TaffyLink<'a> {
     taffy_id: NodeId,
     children: Vec<TaffyLink<'a>>,
     text: Option<String>,
+    inline_runs: Vec<InlineTextRun>,
 }
 
 pub fn layout(root: &StyledNode, viewport_w: u32, viewport_h: u32) -> LayoutNode {
@@ -80,9 +100,11 @@ pub fn layout_with_images(
         |known, avail, _id, context, _style| match context {
             Some(data) => measure_text(
                 &data.text,
+                &data.inline_runs,
                 data.font_size,
                 data.line_height_px,
                 data.white_space,
+                data.allow_wrap,
                 known,
                 avail,
             ),
@@ -153,6 +175,7 @@ fn build_taffy_tree_inner<'a>(
             taffy_id: id,
             children: vec![],
             text: None,
+            inline_runs: Vec::new(),
         };
     }
 
@@ -176,11 +199,11 @@ fn build_taffy_tree_inner<'a>(
         .any(|c| !is_naturally_inline_kind(&c.kind));
 
     let has_block_children = has_natural_block_children;
-    let has_element_children = visible_children
-        .iter()
-        .any(|c| matches!(c.kind, StyledKind::Element { .. }));
-    let should_collapse_inline_text =
-        !has_block_children && !has_element_children && !visible_children.is_empty();
+    let should_collapse_inline_text = !has_block_children
+        && !visible_children.is_empty()
+        && visible_children
+            .iter()
+            .all(|child| can_inline_format(child));
 
     let self_stretches = matches!(
         node.style.align_items,
@@ -188,17 +211,27 @@ fn build_taffy_tree_inner<'a>(
     );
 
     if should_collapse_inline_text {
-        let text = normalize_html_text(&collect_inline_text(node), node.style.white_space);
+        let inline_runs = normalize_inline_runs(flatten_inline_runs(node));
+        let text = inline_runs
+            .iter()
+            .map(|run| run.text.as_str())
+            .collect::<String>();
         if !text.trim().is_empty() {
+            let allow_wrap = !matches!(node.style.display, StyleDisplay::Inline);
             let ctx = TextMeasureData {
                 text: text.clone(),
+                inline_runs: inline_runs.clone(),
                 font_size: node.style.font_size,
                 line_height_px: node.style.line_height.resolve_px(node.style.font_size),
                 white_space: node.style.white_space,
+                allow_wrap,
             };
             let mut style = to_taffy_style_for_node(node, vw, vh, node_content_width);
             if parent_stretches && matches!(node.style.display, StyleDisplay::Inline) {
                 style.align_self = Some(taffy::style::AlignItems::FlexStart);
+            }
+            if !allow_wrap {
+                style.flex_shrink = 0.0;
             }
             let id = tree
                 .new_leaf_with_context(style, ctx)
@@ -208,6 +241,7 @@ fn build_taffy_tree_inner<'a>(
                 taffy_id: id,
                 children: vec![],
                 text: Some(text),
+                inline_runs,
             };
         }
     }
@@ -219,12 +253,18 @@ fn build_taffy_tree_inner<'a>(
         }
         let id = match &node.kind {
             StyledKind::Text(text) => {
-                let text = normalize_html_text(text, node.style.white_space);
+                let text = normalize_inline_text_node(text, node.style.white_space);
+                leaf_style.flex_shrink = 0.0;
                 let ctx = TextMeasureData {
-                    text,
+                    text: text.clone(),
+                    inline_runs: vec![InlineTextRun {
+                        text,
+                        style: node.style.clone(),
+                    }],
                     font_size: node.style.font_size,
                     line_height_px: node.style.line_height.resolve_px(node.style.font_size),
                     white_space: node.style.white_space,
+                    allow_wrap: false,
                 };
                 tree.new_leaf_with_context(leaf_style, ctx)
                     .expect("taffy new_leaf_with_context")
@@ -236,6 +276,7 @@ fn build_taffy_tree_inner<'a>(
             taffy_id: id,
             children: vec![],
             text: None,
+            inline_runs: Vec::new(),
         }
     } else {
         let needs_inline_grouping = has_block_children
@@ -279,6 +320,8 @@ fn build_taffy_tree_inner<'a>(
         {
             container_style.flex_direction = FlexDirection::Row;
             container_style.flex_wrap = taffy::style::FlexWrap::Wrap;
+            container_style.align_items = Some(taffy::style::AlignItems::FlexStart);
+            container_style.align_content = Some(taffy::style::AlignContent::FlexStart);
         }
 
         let child_ids: Vec<NodeId> = children.iter().map(|c| c.taffy_id).collect();
@@ -290,6 +333,7 @@ fn build_taffy_tree_inner<'a>(
             taffy_id: id,
             children,
             text: None,
+            inline_runs: Vec::new(),
         }
     }
 }
@@ -323,6 +367,8 @@ fn group_children_for_block_layout<'a>(
                             display: TaffyDisplay::Flex,
                             flex_direction: FlexDirection::Row,
                             flex_wrap: taffy::style::FlexWrap::Wrap,
+                            align_items: Some(taffy::style::AlignItems::FlexStart),
+                            align_content: Some(taffy::style::AlignContent::FlexStart),
                             ..Default::default()
                         },
                         &run_ids,
@@ -333,6 +379,7 @@ fn group_children_for_block_layout<'a>(
                     taffy_id: row_id,
                     children: run_links,
                     text: None,
+                    inline_runs: Vec::new(),
                 });
                 inline_run.clear();
             }
@@ -359,6 +406,8 @@ fn group_children_for_block_layout<'a>(
                     display: TaffyDisplay::Flex,
                     flex_direction: FlexDirection::Row,
                     flex_wrap: taffy::style::FlexWrap::Wrap,
+                    align_items: Some(taffy::style::AlignItems::FlexStart),
+                    align_content: Some(taffy::style::AlignContent::FlexStart),
                     ..Default::default()
                 },
                 &run_ids,
@@ -372,6 +421,7 @@ fn group_children_for_block_layout<'a>(
             taffy_id: row_id,
             children: run_links,
             text: None,
+            inline_runs: Vec::new(),
         });
     }
 
@@ -427,17 +477,128 @@ fn is_naturally_inline_tag(tag: &str) -> bool {
     )
 }
 
-fn collect_inline_text(node: &StyledNode) -> String {
+fn can_inline_format(node: &StyledNode) -> bool {
     match &node.kind {
-        StyledKind::Text(t) => t.clone(),
+        StyledKind::Text(_) => true,
+        StyledKind::Element { tag } => {
+            is_inline_text_container_tag(tag)
+                && node
+                    .children
+                    .iter()
+                    .filter(|child| child.style.display != StyleDisplay::None)
+                    .all(can_inline_format)
+        }
+        StyledKind::Document => false,
+    }
+}
+
+fn is_inline_text_container_tag(tag: &str) -> bool {
+    matches!(
+        tag.to_lowercase().as_str(),
+        "a" | "abbr"
+            | "b"
+            | "bdi"
+            | "bdo"
+            | "cite"
+            | "code"
+            | "dfn"
+            | "em"
+            | "i"
+            | "kbd"
+            | "label"
+            | "mark"
+            | "q"
+            | "rp"
+            | "rt"
+            | "ruby"
+            | "s"
+            | "samp"
+            | "small"
+            | "span"
+            | "strong"
+            | "sub"
+            | "sup"
+            | "time"
+            | "u"
+            | "var"
+    )
+}
+
+fn flatten_inline_runs(node: &StyledNode) -> Vec<InlineTextRun> {
+    match &node.kind {
+        StyledKind::Text(text) => vec![InlineTextRun {
+            text: text.clone(),
+            style: node.style.clone(),
+        }],
         StyledKind::Element { .. } | StyledKind::Document => node
             .children
             .iter()
-            .filter(|c| c.style.display != StyleDisplay::None)
-            .map(collect_inline_text)
-            .collect::<Vec<_>>()
-            .join(""),
+            .filter(|child| child.style.display != StyleDisplay::None)
+            .flat_map(flatten_inline_runs)
+            .collect(),
     }
+}
+
+fn normalize_inline_runs(runs: Vec<InlineTextRun>) -> Vec<InlineTextRun> {
+    let mut normalized = Vec::new();
+    let mut previous_was_space = true;
+
+    for run in runs {
+        let mut text = String::new();
+        for ch in run.text.chars() {
+            if ch.is_whitespace() {
+                if !previous_was_space {
+                    text.push(' ');
+                }
+                previous_was_space = true;
+            } else {
+                text.push(ch);
+                previous_was_space = false;
+            }
+        }
+
+        if !text.is_empty() {
+            push_inline_run(
+                &mut normalized,
+                InlineTextRun {
+                    text,
+                    style: run.style,
+                },
+            );
+        }
+    }
+
+    if let Some(last) = normalized.last_mut() {
+        if last.text.ends_with(' ') {
+            last.text.pop();
+        }
+    }
+    normalized.retain(|run| !run.text.is_empty());
+    normalized
+}
+
+fn push_inline_run(runs: &mut Vec<InlineTextRun>, run: InlineTextRun) {
+    if let Some(last) = runs.last_mut() {
+        if text_style_matches(&last.style, &run.style) {
+            last.text.push_str(&run.text);
+            return;
+        }
+    }
+    runs.push(run);
+}
+
+fn text_style_matches(a: &ComputedStyle, b: &ComputedStyle) -> bool {
+    a.font_size == b.font_size
+        && a.font_weight == b.font_weight
+        && a.color.r == b.color.r
+        && a.color.g == b.color.g
+        && a.color.b == b.color.b
+        && a.color.a == b.color.a
+        && a.letter_spacing == b.letter_spacing
+        && a.text_transform == b.text_transform
+        && a.text_decoration == b.text_decoration
+        && a.line_height == b.line_height
+        && a.white_space == b.white_space
 }
 
 fn collapse_html_whitespace(text: &str) -> String {
@@ -462,9 +623,35 @@ fn collapse_html_whitespace(text: &str) -> String {
     result
 }
 
+fn collapse_inline_text_node_whitespace(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut previous_was_space = false;
+
+    for ch in text.chars() {
+        if ch.is_whitespace() {
+            if !previous_was_space {
+                result.push(' ');
+            }
+            previous_was_space = true;
+        } else {
+            result.push(ch);
+            previous_was_space = false;
+        }
+    }
+
+    result
+}
+
 fn normalize_html_text(text: &str, white_space: WhiteSpace) -> String {
     match white_space {
         WhiteSpace::Normal | WhiteSpace::Nowrap => collapse_html_whitespace(text),
+        WhiteSpace::Pre | WhiteSpace::PreWrap => text.to_string(),
+    }
+}
+
+fn normalize_inline_text_node(text: &str, white_space: WhiteSpace) -> String {
+    match white_space {
+        WhiteSpace::Normal | WhiteSpace::Nowrap => collapse_inline_text_node_whitespace(text),
         WhiteSpace::Pre | WhiteSpace::PreWrap => text.to_string(),
     }
 }
@@ -493,6 +680,14 @@ fn extract(
         _ => None,
     };
 
+    let inline_fragments = if !link.children.is_empty() {
+        Vec::new()
+    } else if !link.inline_runs.is_empty() {
+        layout_inline_fragments(&link.inline_runs, layout.size.width, &link.styled.style)
+    } else {
+        Vec::new()
+    };
+
     let children = link
         .children
         .iter()
@@ -509,6 +704,7 @@ fn extract(
         pseudo_before: link.styled.pseudo_before.clone(),
         pseudo_after: link.styled.pseudo_after.clone(),
         text,
+        inline_fragments,
         image: None,
         children,
     }
@@ -973,9 +1169,11 @@ fn length_to_dim(l: Length, vw: f32, vh: f32) -> taffy::style::Dimension {
 
 fn measure_text(
     text: &str,
+    inline_runs: &[InlineTextRun],
     font_size: f32,
     line_height_px: f32,
     white_space: WhiteSpace,
+    allow_wrap: bool,
     known: Size<Option<f32>>,
     available: Size<AvailableSpace>,
 ) -> Size<f32> {
@@ -986,11 +1184,17 @@ fn measure_text(
         _ => f32::MAX,
     };
 
-    let (natural_width, line_count) = match white_space {
-        WhiteSpace::Nowrap => (text.chars().count() as f32 * char_width, 1),
-        WhiteSpace::Pre => measure_pre_text(text, char_width),
-        WhiteSpace::PreWrap => measure_pre_wrap_text(text, char_width, avail_width),
-        WhiteSpace::Normal => measure_wrapped_text(text, char_width, avail_width),
+    let (natural_width, line_count) = if !inline_runs.is_empty() {
+        measure_inline_runs(inline_runs, avail_width, allow_wrap, white_space)
+    } else if !allow_wrap {
+        (text.chars().count() as f32 * char_width, 1)
+    } else {
+        match white_space {
+            WhiteSpace::Nowrap => (text.chars().count() as f32 * char_width, 1),
+            WhiteSpace::Pre => measure_pre_text(text, char_width),
+            WhiteSpace::PreWrap => measure_pre_wrap_text(text, char_width, avail_width),
+            WhiteSpace::Normal => measure_wrapped_text(text, char_width, avail_width),
+        }
     };
     let width = known.width.unwrap_or(natural_width.max(char_width));
     let height = known.height.unwrap_or(line_height_px * line_count as f32);
@@ -1017,6 +1221,187 @@ fn measure_pre_wrap_text(text: &str, char_width: f32, max_width: f32) -> (f32, u
         line_count += lines;
     }
     (natural_width, line_count.max(1))
+}
+
+fn measure_inline_runs(
+    runs: &[InlineTextRun],
+    max_width: f32,
+    allow_wrap: bool,
+    white_space: WhiteSpace,
+) -> (f32, usize) {
+    let fragments = layout_inline_fragments_with_options(runs, max_width, allow_wrap, white_space);
+    if fragments.is_empty() {
+        return (0.0, 1);
+    }
+
+    let mut max_line_width = 0.0f32;
+    let mut line_count = 1usize;
+    let mut last_y = fragments[0].y;
+    for fragment in &fragments {
+        if fragment.y > last_y {
+            line_count += 1;
+            last_y = fragment.y;
+        }
+        max_line_width = max_line_width.max(fragment.x + fragment.width);
+    }
+    (max_line_width, line_count)
+}
+
+fn layout_inline_fragments(
+    runs: &[InlineTextRun],
+    max_width: f32,
+    parent_style: &ComputedStyle,
+) -> Vec<LayoutTextFragment> {
+    layout_inline_fragments_with_options(
+        runs,
+        max_width,
+        !matches!(
+            parent_style.white_space,
+            WhiteSpace::Nowrap | WhiteSpace::Pre
+        ),
+        parent_style.white_space,
+    )
+}
+
+fn layout_inline_fragments_with_options(
+    runs: &[InlineTextRun],
+    max_width: f32,
+    allow_wrap: bool,
+    white_space: WhiteSpace,
+) -> Vec<LayoutTextFragment> {
+    let nowrap = !allow_wrap || matches!(white_space, WhiteSpace::Nowrap | WhiteSpace::Pre);
+    let mut fragments = Vec::new();
+    let mut x = 0.0f32;
+    let mut y = 0.0f32;
+    let mut line_height = runs
+        .first()
+        .map(|run| run.style.line_height.resolve_px(run.style.font_size))
+        .unwrap_or(16.0 * 1.2);
+
+    for token in inline_tokens(runs) {
+        if token.text == "\n" && matches!(white_space, WhiteSpace::Pre | WhiteSpace::PreWrap) {
+            x = 0.0;
+            y += line_height;
+            continue;
+        }
+
+        let token_width = token_width(&token);
+        if !nowrap && x > 0.0 && x + token_width > max_width && max_width.is_finite() {
+            x = 0.0;
+            y += line_height;
+        }
+
+        if token.text == " " && x == 0.0 {
+            continue;
+        }
+
+        line_height = line_height.max(token.style.line_height.resolve_px(token.style.font_size));
+        push_fragment(&mut fragments, x, y, token_width, line_height, token);
+        x += token_width;
+    }
+
+    fragments
+}
+
+fn inline_tokens(runs: &[InlineTextRun]) -> Vec<InlineTextRun> {
+    let mut tokens = Vec::new();
+    let mut current: Option<InlineTextRun> = None;
+
+    for run in runs {
+        for ch in run.text.chars() {
+            if ch == ' ' || ch == '\n' {
+                if let Some(token) = current.take() {
+                    tokens.push(token);
+                }
+                tokens.push(InlineTextRun {
+                    text: ch.to_string(),
+                    style: run.style.clone(),
+                });
+                continue;
+            }
+
+            if is_cjk_char(ch) {
+                if let Some(token) = current.take() {
+                    tokens.push(token);
+                }
+                tokens.push(InlineTextRun {
+                    text: ch.to_string(),
+                    style: run.style.clone(),
+                });
+                continue;
+            }
+
+            match current.as_mut() {
+                Some(token) if text_style_matches(&token.style, &run.style) => token.text.push(ch),
+                Some(_) => {
+                    tokens.push(current.take().unwrap());
+                    current = Some(InlineTextRun {
+                        text: ch.to_string(),
+                        style: run.style.clone(),
+                    });
+                }
+                None => {
+                    current = Some(InlineTextRun {
+                        text: ch.to_string(),
+                        style: run.style.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    if let Some(token) = current {
+        tokens.push(token);
+    }
+    tokens
+}
+
+fn is_cjk_char(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3040..=0x309f
+            | 0x30a0..=0x30ff
+            | 0x3400..=0x4dbf
+            | 0x4e00..=0x9fff
+            | 0xf900..=0xfaff
+            | 0xff00..=0xffef
+    )
+}
+
+fn token_width(token: &InlineTextRun) -> f32 {
+    token
+        .text
+        .chars()
+        .map(|ch| {
+            let advance = if ch == ' ' { 0.33 } else { 0.55 } * token.style.font_size;
+            advance + token.style.letter_spacing
+        })
+        .sum()
+}
+
+fn push_fragment(
+    fragments: &mut Vec<LayoutTextFragment>,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    token: InlineTextRun,
+) {
+    if let Some(last) = fragments.last_mut() {
+        if last.y == y && text_style_matches(&last.style, &token.style) {
+            last.text.push_str(&token.text);
+            last.width += width;
+            return;
+        }
+    }
+    fragments.push(LayoutTextFragment {
+        x,
+        y,
+        width,
+        height,
+        text: token.text,
+        style: token.style,
+    });
 }
 
 fn measure_wrapped_text(text: &str, char_width: f32, max_width: f32) -> (f32, usize) {
@@ -1092,9 +1477,11 @@ mod tests {
     fn nowrap_measurement_keeps_text_on_one_line() {
         let size = measure_text(
             "Google 検索",
+            &[],
             16.0,
             20.0,
             WhiteSpace::Nowrap,
+            true,
             Size::NONE,
             Size {
                 width: AvailableSpace::Definite(30.0),
