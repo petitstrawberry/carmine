@@ -23,6 +23,15 @@ pub struct LayoutNode {
     pub children: Vec<LayoutNode>,
 }
 
+impl LayoutNode {
+    pub fn content_bottom(&self) -> f32 {
+        let self_bottom = self.y + self.height;
+        self.children
+            .iter()
+            .fold(self_bottom, |max, child| max.max(child.content_bottom()))
+    }
+}
+
 struct TextMeasureData {
     text: String,
     font_size: f32,
@@ -43,7 +52,7 @@ pub fn layout(root: &StyledNode, viewport_w: u32, viewport_h: u32) -> LayoutNode
 
     let available = Size {
         width: AvailableSpace::Definite(vw),
-        height: AvailableSpace::Definite(vh),
+        height: AvailableSpace::MaxContent,
     };
 
     tree.compute_layout_with_measure(

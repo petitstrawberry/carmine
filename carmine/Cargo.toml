@@ -22,3 +22,5 @@ scarlet-os = { git = "https://github.com/petitstrawberry/Scarlet", package = "sc
 scarlet-sys = { git = "https://github.com/petitstrawberry/Scarlet", package = "scarlet-sys", optional = true }
 scarlet-ui = { git = "https://github.com/petitstrawberry/Scarlet", package = "scarlet-ui", default-features = false, features = ["std"], optional = true }
 scarlet-ui-macros = { git = "https://github.com/petitstrawberry/Scarlet", package = "scarlet-ui-macros", optional = true }
+scraper = "0.27.0"
+ego-tree = "0.11.0"

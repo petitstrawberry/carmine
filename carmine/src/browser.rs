@@ -1,8 +1,11 @@
+use std::rc::Rc;
+
 use scarlet_ui::prelude::*;
-use scarlet_ui::{Application, ComponentElement, Size, Window};
+use scarlet_ui::{Application, ComponentElement, Listenable, Size, Window};
 
 use carmine_core::render::RenderOptions;
 
+use crate::paint_signal::PaintSignal;
 use crate::webview::WebView;
 
 pub struct BrowserApp {
@@ -10,11 +13,18 @@ pub struct BrowserApp {
     width: u32,
     height: u32,
     options: RenderOptions,
+    paint_signal: Rc<PaintSignal>,
 }
 
 impl BrowserApp {
     pub fn new(html: String, width: u32, height: u32, options: RenderOptions) -> Self {
-        Self { html, width, height, options }
+        Self {
+            html,
+            width,
+            height,
+            options,
+            paint_signal: Rc::new(PaintSignal::new()),
+        }
     }
 }
 
@@ -25,6 +35,7 @@ impl Clone for BrowserApp {
             width: self.width,
             height: self.height,
             options: self.options,
+            paint_signal: Rc::clone(&self.paint_signal),
         }
     }
 }
@@ -34,6 +45,10 @@ impl View for BrowserApp {
         Box::new(ComponentElement::new(self.clone()))
     }
 
+    fn listenables(&self) -> Vec<&dyn Listenable> {
+        vec![self.paint_signal.as_ref()]
+    }
+
     fn as_any(&self) -> &dyn core::any::Any {
         self
     }
@@ -41,12 +56,16 @@ impl View for BrowserApp {
 
 impl Application for BrowserApp {
     fn body(&self) -> impl View {
-        Window::new(
-            "Carmine",
-            WebView::new(&self.html, self.width, self.height, self.options),
-        )
-        .app_id("org.scarlet-os.carmine")
-        .size(Size::new(self.width as f32, self.height as f32))
+        let webview = WebView::new(
+            &self.html,
+            self.width,
+            self.height,
+            self.options,
+            Rc::clone(&self.paint_signal),
+        );
+        Window::new("Carmine", webview)
+            .app_id("org.scarlet-os.carmine")
+            .size(Size::new(self.width as f32, self.height as f32))
     }
 
     fn debug_logging(&self) -> bool {

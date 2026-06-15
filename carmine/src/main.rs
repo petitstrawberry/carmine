@@ -9,6 +9,10 @@ use clap::Parser;
 #[cfg(feature = "scarlet")]
 use scarlet_ui::Application;
 
+mod fetch;
+mod paint_signal;
+mod resolve;
+
 #[cfg(feature = "scarlet")]
 mod bridge;
 #[cfg(feature = "scarlet")]
@@ -40,16 +44,32 @@ fn main() {
     let args = Args::parse();
 
     let html = match &args.file {
-        Some(path) => match fs::read_to_string(path) {
-            Ok(content) => {
-                println!("[carmine] loaded: {}", path);
-                content
-            }
-            Err(e) => {
-                println!("[carmine] failed to read {}: {}", path, e);
-                DEFAULT_HTML.to_string()
-            }
-        },
+        Some(path) => {
+            let raw = if path.starts_with("http://") || path.starts_with("https://") {
+                match fetch::fetch_url(path) {
+                    Ok(content) => {
+                        println!("[carmine] fetched: {} ({} bytes)", path, content.len());
+                        content
+                    }
+                    Err(e) => {
+                        println!("[carmine] fetch failed: {}", e);
+                        DEFAULT_HTML.to_string()
+                    }
+                }
+            } else {
+                match fs::read_to_string(path) {
+                    Ok(content) => {
+                        println!("[carmine] loaded: {}", path);
+                        content
+                    }
+                    Err(e) => {
+                        println!("[carmine] failed to read {}: {}", path, e);
+                        DEFAULT_HTML.to_string()
+                    }
+                }
+            };
+            resolve::resolve_external_css(&raw, path)
+        }
         None => DEFAULT_HTML.to_string(),
     };
 
@@ -58,8 +78,9 @@ fn main() {
     };
 
     if let Some(path) = args.dump_png {
-        let pipeline = RenderPipeline::with_options(&html, args.width, args.height, render_options);
-        let pixmap = pipeline.render(args.width, args.height, 1.0);
+        let mut pipeline =
+            RenderPipeline::with_options(&html, args.width, args.height, render_options);
+        let pixmap = pipeline.render_owned(args.width, args.height, 1.0);
         match pixmap.save_png(&path) {
             Ok(()) => println!("[carmine] wrote: {}", path),
             Err(e) => println!("[carmine] failed to write {}: {}", path, e),
