@@ -726,11 +726,20 @@ fn apply_html_attributes(tag: &str, el: &scraper::node::Element, style: &mut Com
                 style.table_rowspan = rowspan;
             }
             if let Some(align) = el.attr("align") {
-                style.text_align = match align.trim().to_ascii_lowercase().as_str() {
-                    "center" | "middle" => TextAlign::Center,
-                    "right" => TextAlign::Right,
-                    "left" => TextAlign::Left,
-                    _ => style.text_align,
+                match align.trim().to_ascii_lowercase().as_str() {
+                    "center" | "middle" => {
+                        style.text_align = TextAlign::Center;
+                        style.align_items = AlignItems::Center;
+                    }
+                    "right" => {
+                        style.text_align = TextAlign::Right;
+                        style.align_items = AlignItems::FlexEnd;
+                    }
+                    "left" => {
+                        style.text_align = TextAlign::Left;
+                        style.align_items = AlignItems::FlexStart;
+                    }
+                    _ => {}
                 };
             }
             if el.attr("nowrap").is_some() {
@@ -951,7 +960,9 @@ fn default_for_tag(tag: &str, body_margin: f32) -> ComputedStyle {
             margin_bottom: Length::px(16.0),
             ..base
         },
-        "div" | "section" | "article" | "header" | "footer" | "main" | "nav" | "aside" => base,
+        "div" | "section" | "article" | "header" | "footer" | "main" | "nav" | "aside" | "form" => {
+            base
+        }
         "ul" | "ol" => ComputedStyle {
             margin_top: Length::px(16.0),
             margin_bottom: Length::px(16.0),
