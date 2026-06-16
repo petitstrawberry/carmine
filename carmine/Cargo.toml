@@ -23,6 +23,7 @@ scarlet-ui-macros = { git = "https://github.com/petitstrawberry/Scarlet", packag
 scraper = "0.27.0"
 ego-tree = "0.11.0"
 encoding_rs = "0.8"
+boa_engine = "0.20"
 ureq = { version = "2", features = ["tls"] }
 getrandom = { version = "0.2", features = ["custom"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

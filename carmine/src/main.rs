@@ -12,6 +12,7 @@ use scarlet_ui::Application;
 mod fetch;
 #[cfg(feature = "scarlet")]
 mod getrandom_scarlet;
+mod js;
 #[cfg(feature = "scarlet")]
 mod paint_signal;
 mod resolve;
@@ -72,6 +73,22 @@ fn main() {
             resolve::resolve_external_css(&raw, path)
         }
         _ => DEFAULT_HTML.to_string(),
+    };
+
+    let html = {
+        let base = args.file.clone().unwrap_or_default();
+        let js_result = js::execute_scripts(&html, &base);
+        if js_result.document_write_buffer.is_empty() {
+            html
+        } else {
+            let mut result = html.clone();
+            if let Some(pos) = result.rfind("</body>") {
+                result.insert_str(pos, &js_result.document_write_buffer);
+            } else {
+                result.push_str(&js_result.document_write_buffer);
+            }
+            result
+        }
     };
 
     let render_options = RenderOptions {

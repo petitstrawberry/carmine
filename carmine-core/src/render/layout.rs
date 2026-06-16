@@ -1,8 +1,8 @@
 use taffy::geometry::{Line, Rect, Size};
 use taffy::prelude::TaffyGridSpan;
 use taffy::style::{
-    AvailableSpace, Display as TaffyDisplay, FlexDirection, GridPlacement, GridTrackRepetition,
-    LengthPercentage, LengthPercentageAuto, MaxTrackSizingFunction, MinTrackSizingFunction,
+    AvailableSpace, Display as TaffyDisplay, FlexDirection, GridPlacement, LengthPercentage,
+    LengthPercentageAuto, MaxTrackSizingFunction, MinTrackSizingFunction,
     NonRepeatedTrackSizingFunction, Style as TaffyStyle, TrackSizingFunction,
 };
 use taffy::{NodeId, TaffyTree};
@@ -1589,20 +1589,38 @@ fn build_table_taffy_tree<'a>(
     let mut table_style = to_taffy_style_for_node(node, vw, vh, node_content_width);
     table_style.display = TaffyDisplay::Grid;
 
-    let cells = collect_table_cells(node);
+    let cells = collect_table_cells_with_columns(node);
     let max_columns = count_max_columns(node);
+    let mut estimated_col_widths = Vec::new();
     if max_columns > 0 {
         let col_widths = collect_column_width_hints(node, max_columns);
         table_style.grid_template_columns = build_grid_tracks_from_hints(&col_widths, max_columns);
+        if let Some(width) = node_content_width {
+            let intrinsic_col_widths = collect_intrinsic_column_widths(node, max_columns, vw, vh);
+            estimated_col_widths = estimate_column_widths_from_hints(
+                &col_widths,
+                max_columns,
+                width,
+                &intrinsic_col_widths,
+            );
+            if let Some(table_width) =
+                estimate_auto_table_width(&estimated_col_widths, width, node.style.width)
+            {
+                table_style.size.width = taffy::style::Dimension::Length(table_width);
+            }
+        }
     }
 
     let mut child_links: Vec<TaffyLink<'a>> = Vec::with_capacity(cells.len());
-    for cell_node in cells {
+    for (cell_node, start_col) in cells {
         let cell_colspan = cell_node.style.table_colspan.max(1) as usize;
-        let cell_estimated_width = node_content_width.map(|w| {
-            let cols = max_columns.max(1) as f32;
-            (w * cell_colspan as f32 / cols).max(1.0)
-        });
+        let cell_estimated_width = estimate_cell_width(
+            &estimated_col_widths,
+            start_col,
+            cell_colspan,
+            node_content_width,
+            max_columns,
+        );
         let cell_link = build_taffy_tree_inner(
             cell_node,
             tree,
@@ -1652,35 +1670,54 @@ fn build_table_taffy_tree<'a>(
     }
 }
 
-fn collect_table_cells<'a>(table: &'a StyledNode) -> Vec<&'a StyledNode> {
+fn collect_table_cells_with_columns(table: &StyledNode) -> Vec<(&StyledNode, usize)> {
+    let rows = collect_table_rows(table);
     let mut cells = Vec::new();
-    for child in &table.children {
-        if let StyledKind::Element { tag } = &child.kind {
-            let t = tag.to_ascii_lowercase();
-            if t == "tr" {
-                for cell in &child.children {
-                    if is_table_cell(cell) {
-                        cells.push(cell);
-                    }
-                }
-            } else if t == "thead" || t == "tbody" || t == "tfoot" {
-                for row in &child.children {
-                    if let StyledKind::Element { tag } = &row.kind {
-                        if tag.eq_ignore_ascii_case("tr") {
-                            for cell in &row.children {
-                                if is_table_cell(cell) {
-                                    cells.push(cell);
-                                }
-                            }
-                        }
-                    }
-                }
-            } else if t == "td" || t == "th" {
-                cells.push(child);
-            }
+
+    for row in rows {
+        let mut col = 0usize;
+        for cell in row.children.iter().filter(|c| is_table_cell(c)) {
+            cells.push((cell, col));
+            col += cell.style.table_colspan.max(1) as usize;
         }
     }
+
     cells
+}
+
+fn estimate_cell_width(
+    col_widths: &[f32],
+    start_col: usize,
+    colspan: usize,
+    table_width: Option<f32>,
+    max_columns: usize,
+) -> Option<f32> {
+    if !col_widths.is_empty() {
+        let width = col_widths
+            .iter()
+            .skip(start_col)
+            .take(colspan.max(1))
+            .sum::<f32>();
+        return Some(width.max(1.0));
+    }
+
+    table_width.map(|w| {
+        let cols = max_columns.max(1) as f32;
+        (w * colspan.max(1) as f32 / cols).max(1.0)
+    })
+}
+
+fn estimate_auto_table_width(
+    col_widths: &[f32],
+    available_width: f32,
+    style_width: Length,
+) -> Option<f32> {
+    if !style_width.is_auto() {
+        return None;
+    }
+
+    let intrinsic_width = col_widths.iter().sum::<f32>();
+    (intrinsic_width > available_width).then_some(intrinsic_width)
 }
 
 fn is_table_cell(node: &StyledNode) -> bool {
@@ -1761,6 +1798,131 @@ fn build_grid_tracks_from_hints(
         .collect()
 }
 
+fn estimate_column_widths_from_hints(
+    hints: &[Option<Length>],
+    count: usize,
+    table_width: f32,
+    intrinsic_widths: &[f32],
+) -> Vec<f32> {
+    let count = count.max(1);
+    let mut widths = vec![0.0; count];
+    let mut fixed_width = 0.0f32;
+    let mut flexible_columns = 0usize;
+
+    for (index, width) in widths.iter_mut().enumerate() {
+        match hints.get(index).and_then(|h| h.as_ref()) {
+            Some(Length::Percent(v)) => {
+                *width = table_width * *v;
+                fixed_width += *width;
+            }
+            Some(Length::Px(v)) => {
+                *width = *v;
+                fixed_width += *width;
+            }
+            _ => {
+                let intrinsic = intrinsic_widths.get(index).copied().unwrap_or(0.0);
+                *width = intrinsic;
+                fixed_width += intrinsic;
+                flexible_columns += 1;
+            }
+        }
+    }
+
+    if flexible_columns > 0 {
+        let remaining_width = (table_width - fixed_width).max(0.0);
+        let flexible_width = if remaining_width > 0.0 {
+            (remaining_width / flexible_columns as f32).max(1.0)
+        } else {
+            0.0
+        };
+        for (index, width) in widths.iter_mut().enumerate() {
+            if hints.get(index).and_then(|h| h.as_ref()).is_none() {
+                *width += flexible_width;
+            }
+        }
+    }
+
+    widths
+}
+
+fn collect_intrinsic_column_widths(
+    table: &StyledNode,
+    max_columns: usize,
+    vw: f32,
+    vh: f32,
+) -> Vec<f32> {
+    let rows = collect_table_rows(table);
+    let mut widths = vec![0.0f32; max_columns];
+
+    for row in rows {
+        let mut col = 0usize;
+        for cell in row.children.iter().filter(|c| is_table_cell(c)) {
+            let colspan = cell.style.table_colspan.max(1) as usize;
+            let per_col = intrinsic_node_width(cell, vw, vh) / colspan as f32;
+            for offset in 0..colspan {
+                if let Some(width) = widths.get_mut(col + offset) {
+                    *width = (*width).max(per_col);
+                }
+            }
+            col += colspan;
+        }
+    }
+
+    widths
+}
+
+fn intrinsic_node_width(node: &StyledNode, vw: f32, vh: f32) -> f32 {
+    if node.style.display == StyleDisplay::None {
+        return 0.0;
+    }
+
+    let specified = definite_intrinsic_width(node.style.width, vw, vh);
+    let horizontal_padding = length_to_px(node.style.padding_left, vw, vw, vh)
+        + length_to_px(node.style.padding_right, vw, vw, vh);
+    let horizontal_border = node.style.border_width * 2.0
+        + node.style.border_left_width
+        + node.style.border_right_width;
+    let children = intrinsic_children_width(node, vw, vh);
+
+    specified.max(children + horizontal_padding + horizontal_border)
+}
+
+fn intrinsic_children_width(node: &StyledNode, vw: f32, vh: f32) -> f32 {
+    match &node.kind {
+        StyledKind::Text(text) => intrinsic_text_width(text, &node.style),
+        StyledKind::Element { .. } | StyledKind::Document => {
+            if can_inline_format(node) {
+                let runs = normalize_inline_runs(flatten_inline_runs(node));
+                measure_inline_runs(&runs, f32::MAX, false, node.style.white_space).0
+            } else {
+                node.children
+                    .iter()
+                    .map(|child| intrinsic_node_width(child, vw, vh))
+                    .fold(0.0, f32::max)
+            }
+        }
+    }
+}
+
+fn intrinsic_text_width(text: &str, style: &ComputedStyle) -> f32 {
+    let text = normalize_html_text(text, style.white_space);
+    let run = InlineTextRun {
+        text,
+        style: style.clone(),
+    };
+    measure_inline_runs(&[run], f32::MAX, false, style.white_space).0
+}
+
+fn definite_intrinsic_width(width: Length, vw: f32, vh: f32) -> f32 {
+    match width {
+        Length::Px(v) => v,
+        Length::Vw(v) => v * vw / 100.0,
+        Length::Vh(v) => v * vh / 100.0,
+        Length::Clamp { .. } => width.resolve_px(vw, vw),
+        Length::Zero | Length::Auto | Length::Percent(_) => 0.0,
+    }
+}
+
 fn collect_table_rows(table: &StyledNode) -> Vec<&StyledNode> {
     let mut rows = Vec::new();
     for child in &table.children {
@@ -1811,6 +1973,56 @@ mod tests {
         assert_eq!(
             auto_fit_repeat_count(&tracks, Some(3), Some(180.0), 18.0),
             Some(1)
+        );
+    }
+
+    #[test]
+    fn table_cell_width_estimate_uses_remaining_auto_column_width() {
+        let hints = vec![
+            Some(Length::Percent(0.25)),
+            None,
+            Some(Length::Percent(0.25)),
+        ];
+        let columns = estimate_column_widths_from_hints(&hints, 3, 800.0, &[]);
+
+        assert_eq!(columns, vec![200.0, 400.0, 200.0]);
+        assert_eq!(
+            estimate_cell_width(&columns, 1, 1, Some(800.0), 3),
+            Some(400.0)
+        );
+        assert!(estimate_cell_width(&columns, 1, 1, Some(800.0), 3).unwrap() > 800.0 / 3.0);
+    }
+
+    #[test]
+    fn table_auto_column_estimate_honors_intrinsic_content_width() {
+        let hints = vec![
+            Some(Length::Percent(0.25)),
+            None,
+            Some(Length::Percent(0.25)),
+        ];
+        let intrinsic = vec![0.0, 520.0, 0.0];
+        let columns = estimate_column_widths_from_hints(&hints, 3, 800.0, &intrinsic);
+
+        assert_eq!(columns, vec![200.0, 520.0, 200.0]);
+        assert_eq!(
+            estimate_cell_width(&columns, 1, 1, Some(800.0), 3),
+            Some(520.0)
+        );
+    }
+
+    #[test]
+    fn auto_table_width_expands_to_intrinsic_columns() {
+        assert_eq!(
+            estimate_auto_table_width(&[200.0, 520.0, 200.0], 800.0, Length::Auto),
+            Some(920.0)
+        );
+        assert_eq!(
+            estimate_auto_table_width(&[200.0, 400.0, 200.0], 800.0, Length::Auto),
+            None
+        );
+        assert_eq!(
+            estimate_auto_table_width(&[200.0, 520.0, 200.0], 800.0, Length::Px(800.0)),
+            None
         );
     }
 

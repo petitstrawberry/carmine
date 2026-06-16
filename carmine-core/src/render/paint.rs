@@ -996,21 +996,23 @@ fn draw_background_image(
         return;
     }
 
-    let image_w = img.width as f32;
-    let image_h = img.height as f32;
+    let image_w = img.width as f32 * scale;
+    let image_h = img.height as f32 * scale;
+    let logical_area_w = area_w / scale;
+    let logical_area_h = area_h / scale;
     let viewport_w = pixmap.width() as f32 / scale;
     let offset_x = resolve_background_offset(
         node.style.background_position_x,
-        area_w,
-        image_w,
+        logical_area_w,
+        img.width as f32,
         viewport_w,
-    );
+    ) * scale;
     let offset_y = resolve_background_offset(
         node.style.background_position_y,
-        area_h,
-        image_h,
+        logical_area_h,
+        img.height as f32,
         viewport_w,
-    );
+    ) * scale;
 
     let repeat_x = node.style.background_repeat_x;
     let repeat_y = node.style.background_repeat_y;
