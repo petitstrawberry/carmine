@@ -1668,12 +1668,12 @@ checksum = "dd29631678d6fb0903b69223673e122c32e9ae559d0960a38d574695ebc0ea15"
 [[package]]
 name = "scarlet-abi"
 version = "0.16.0"
-source = "git+https://github.com/petitstrawberry/Scarlet#7b5af78860f4bba85e5245ca4df33d5f56a63c76"
+source = "git+https://github.com/petitstrawberry/Scarlet#13686a763c4f5cab99b717c6f11929155abc3c16"
 
 [[package]]
 name = "scarlet-os"
 version = "0.16.0"
-source = "git+https://github.com/petitstrawberry/Scarlet#7b5af78860f4bba85e5245ca4df33d5f56a63c76"
+source = "git+https://github.com/petitstrawberry/Scarlet#13686a763c4f5cab99b717c6f11929155abc3c16"
 dependencies = [
  "scarlet-abi",
  "scarlet-rt",
@@ -1683,7 +1683,7 @@ dependencies = [
 [[package]]
 name = "scarlet-rt"
 version = "0.16.0"
-source = "git+https://github.com/petitstrawberry/Scarlet#7b5af78860f4bba85e5245ca4df33d5f56a63c76"
+source = "git+https://github.com/petitstrawberry/Scarlet#13686a763c4f5cab99b717c6f11929155abc3c16"
 dependencies = [
  "scarlet-sys",
 ]
@@ -1691,7 +1691,7 @@ dependencies = [
 [[package]]
 name = "scarlet-sys"
 version = "0.16.0"
-source = "git+https://github.com/petitstrawberry/Scarlet#7b5af78860f4bba85e5245ca4df33d5f56a63c76"
+source = "git+https://github.com/petitstrawberry/Scarlet#13686a763c4f5cab99b717c6f11929155abc3c16"
 dependencies = [
  "scarlet-abi",
 ]
@@ -1699,7 +1699,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui"
 version = "0.1.0"
-source = "git+https://github.com/petitstrawberry/Scarlet#7b5af78860f4bba85e5245ca4df33d5f56a63c76"
+source = "git+https://github.com/petitstrawberry/Scarlet#13686a763c4f5cab99b717c6f11929155abc3c16"
 dependencies = [
  "ab_glyph",
  "bitflags 2.13.0",
@@ -1713,7 +1713,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui-macros"
 version = "0.1.0"
-source = "git+https://github.com/petitstrawberry/Scarlet#7b5af78860f4bba85e5245ca4df33d5f56a63c76"
+source = "git+https://github.com/petitstrawberry/Scarlet#13686a763c4f5cab99b717c6f11929155abc3c16"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1979,7 +1979,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sws-client"
 version = "0.1.0"
-source = "git+https://github.com/petitstrawberry/Scarlet#7b5af78860f4bba85e5245ca4df33d5f56a63c76"
+source = "git+https://github.com/petitstrawberry/Scarlet#13686a763c4f5cab99b717c6f11929155abc3c16"
 dependencies = [
  "scarlet-os",
  "sws-protocol",
@@ -1988,7 +1988,7 @@ dependencies = [
 [[package]]
 name = "sws-protocol"
 version = "0.16.0"
-source = "git+https://github.com/petitstrawberry/Scarlet#7b5af78860f4bba85e5245ca4df33d5f56a63c76"
+source = "git+https://github.com/petitstrawberry/Scarlet#13686a763c4f5cab99b717c6f11929155abc3c16"
 
 [[package]]
 name = "syn"
