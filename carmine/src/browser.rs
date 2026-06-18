@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use scarlet_ui::prelude::*;
-use scarlet_ui::{Application, ComponentElement, Listenable, Size, Window};
+use scarlet_ui::{Application, Listenable, Size, Window};
 
 use carmine_core::render::RenderOptions;
 
@@ -49,22 +49,8 @@ impl Clone for BrowserApp {
     }
 }
 
-impl View for BrowserApp {
-    fn create_element(&self) -> Box<dyn Element> {
-        Box::new(ComponentElement::new(self.clone()))
-    }
-
-    fn listenables(&self) -> Vec<&dyn Listenable> {
-        vec![self.paint_signal.as_ref()]
-    }
-
-    fn as_any(&self) -> &dyn core::any::Any {
-        self
-    }
-}
-
 impl Application for BrowserApp {
-    fn body(&self) -> impl View {
+    fn scenes(&self) -> impl Scene {
         let webview = WebView::with_base(
             &self.html,
             self.width,
@@ -76,6 +62,10 @@ impl Application for BrowserApp {
         Window::new("Carmine", webview)
             .app_id("org.scarlet-os.carmine")
             .size(Size::new(self.width as f32, self.height as f32))
+    }
+
+    fn listenables(&self) -> Vec<&dyn Listenable> {
+        vec![self.paint_signal.as_ref()]
     }
 
     fn debug_logging(&self) -> bool {

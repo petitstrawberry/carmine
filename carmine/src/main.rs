@@ -7,7 +7,7 @@ use carmine_core::{
 use clap::Parser;
 
 #[cfg(feature = "scarlet")]
-use scarlet_ui::Application;
+use scarlet_ui::ApplicationRunExt;
 
 mod fetch;
 #[cfg(feature = "scarlet")]
