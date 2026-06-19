@@ -400,8 +400,8 @@ dependencies = [
  "getrandom 0.2.17",
  "rustls",
  "rustls-pki-types",
- "scarlet-os 0.16.0 (git+https://github.com/petitstrawberry/Scarlet)",
- "scarlet-sys 0.16.0 (git+https://github.com/petitstrawberry/Scarlet)",
+ "scarlet-os",
+ "scarlet-sys",
  "scarlet-ui",
  "scarlet-ui-macros",
  "scraper 0.27.0",
@@ -2539,35 +2539,21 @@ version = "0.16.0"
 source = "git+https://github.com/petitstrawberry/Scarlet?branch=dev#2953c8620c55ba448ec8804a801558bf7085b150"
 
 [[package]]
-name = "scarlet-abi"
-version = "0.16.0"
-source = "git+https://github.com/petitstrawberry/Scarlet#13686a763c4f5cab99b717c6f11929155abc3c16"
-
-[[package]]
 name = "scarlet-os"
 version = "0.16.0"
 source = "git+https://github.com/petitstrawberry/Scarlet?branch=dev#2953c8620c55ba448ec8804a801558bf7085b150"
 dependencies = [
- "scarlet-abi 0.16.0 (git+https://github.com/petitstrawberry/Scarlet?branch=dev)",
- "scarlet-sys 0.16.0 (git+https://github.com/petitstrawberry/Scarlet?branch=dev)",
-]
-
-[[package]]
-name = "scarlet-os"
-version = "0.16.0"
-source = "git+https://github.com/petitstrawberry/Scarlet#13686a763c4f5cab99b717c6f11929155abc3c16"
-dependencies = [
- "scarlet-abi 0.16.0 (git+https://github.com/petitstrawberry/Scarlet)",
+ "scarlet-abi",
  "scarlet-rt",
- "scarlet-sys 0.16.0 (git+https://github.com/petitstrawberry/Scarlet)",
+ "scarlet-sys",
 ]
 
 [[package]]
 name = "scarlet-rt"
 version = "0.16.0"
-source = "git+https://github.com/petitstrawberry/Scarlet#13686a763c4f5cab99b717c6f11929155abc3c16"
+source = "git+https://github.com/petitstrawberry/Scarlet?branch=dev#2953c8620c55ba448ec8804a801558bf7085b150"
 dependencies = [
- "scarlet-sys 0.16.0 (git+https://github.com/petitstrawberry/Scarlet)",
+ "scarlet-sys",
 ]
 
 [[package]]
@@ -2575,15 +2561,7 @@ name = "scarlet-sys"
 version = "0.16.0"
 source = "git+https://github.com/petitstrawberry/Scarlet?branch=dev#2953c8620c55ba448ec8804a801558bf7085b150"
 dependencies = [
- "scarlet-abi 0.16.0 (git+https://github.com/petitstrawberry/Scarlet?branch=dev)",
-]
-
-[[package]]
-name = "scarlet-sys"
-version = "0.16.0"
-source = "git+https://github.com/petitstrawberry/Scarlet#13686a763c4f5cab99b717c6f11929155abc3c16"
-dependencies = [
- "scarlet-abi 0.16.0 (git+https://github.com/petitstrawberry/Scarlet)",
+ "scarlet-abi",
 ]
 
 [[package]]
@@ -3000,7 +2978,7 @@ name = "sws-client"
 version = "0.1.0"
 source = "git+https://github.com/petitstrawberry/Scarlet?branch=dev#2953c8620c55ba448ec8804a801558bf7085b150"
 dependencies = [
- "scarlet-os 0.16.0 (git+https://github.com/petitstrawberry/Scarlet?branch=dev)",
+ "scarlet-os",
  "sws-protocol",
 ]
 

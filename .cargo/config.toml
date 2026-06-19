@@ -8,4 +8,6 @@ linker = "rust-lld"
 linker = "rust-lld"
 
 [unstable]
+build-std = ["std", "panic_abort"]
+build-std-features = ["compiler-builtins-mem"]
 unstable-options = true
