@@ -130,9 +130,9 @@ checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
 
 [[package]]
 name = "arrayvec"
-version = "0.7.6"
+version = "0.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
+checksum = "f02882884d3e1bc524fb12c79f107f6ad0e1cfd498c536ffb494301740995dfe"
 
 [[package]]
 name = "as-raw-xcb-connection"
@@ -407,7 +407,7 @@ dependencies = [
  "scraper 0.27.0",
  "ureq",
  "url",
- "webpki-roots 1.0.7",
+ "webpki-roots 1.0.8",
 ]
 
 [[package]]
@@ -426,9 +426,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.64"
+version = "1.2.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dad887fd958be91b5098c0248def011f4523ab786cd411be668777e55063501f"
+checksum = "e228eec9be7c17ccb640b59b36a5cd805ea2a564a4c5e162c2f659fea30d3b96"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -857,7 +857,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1546,9 +1546,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.32"
+version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
+checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
 name = "mac"
@@ -2461,7 +2461,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2474,7 +2474,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2536,12 +2536,12 @@ dependencies = [
 [[package]]
 name = "scarlet-abi"
 version = "0.16.0"
-source = "git+https://github.com/petitstrawberry/Scarlet?branch=dev#2953c8620c55ba448ec8804a801558bf7085b150"
+source = "git+https://github.com/petitstrawberry/Scarlet?branch=dev#6871392cfa8d55f2f8d41acfa664e65d733f4b94"
 
 [[package]]
 name = "scarlet-os"
 version = "0.16.0"
-source = "git+https://github.com/petitstrawberry/Scarlet?branch=dev#2953c8620c55ba448ec8804a801558bf7085b150"
+source = "git+https://github.com/petitstrawberry/Scarlet?branch=dev#6871392cfa8d55f2f8d41acfa664e65d733f4b94"
 dependencies = [
  "scarlet-abi",
  "scarlet-rt",
@@ -2551,7 +2551,7 @@ dependencies = [
 [[package]]
 name = "scarlet-rt"
 version = "0.16.0"
-source = "git+https://github.com/petitstrawberry/Scarlet?branch=dev#2953c8620c55ba448ec8804a801558bf7085b150"
+source = "git+https://github.com/petitstrawberry/Scarlet?branch=dev#6871392cfa8d55f2f8d41acfa664e65d733f4b94"
 dependencies = [
  "scarlet-sys",
 ]
@@ -2559,7 +2559,7 @@ dependencies = [
 [[package]]
 name = "scarlet-sys"
 version = "0.16.0"
-source = "git+https://github.com/petitstrawberry/Scarlet?branch=dev#2953c8620c55ba448ec8804a801558bf7085b150"
+source = "git+https://github.com/petitstrawberry/Scarlet?branch=dev#6871392cfa8d55f2f8d41acfa664e65d733f4b94"
 dependencies = [
  "scarlet-abi",
 ]
@@ -2567,7 +2567,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui"
 version = "0.1.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui#3bb6401776d0930f5f0bef30dc5305a486fc0afe"
+source = "git+https://github.com/petitstrawberry/scarlet-ui#f612bbb95789b8720fc2f5ce3174f6e4dcf59096"
 dependencies = [
  "scarlet-ui-core",
  "scarlet-ui-platform-sws",
@@ -2577,11 +2577,12 @@ dependencies = [
 [[package]]
 name = "scarlet-ui-core"
 version = "0.1.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui#3bb6401776d0930f5f0bef30dc5305a486fc0afe"
+source = "git+https://github.com/petitstrawberry/scarlet-ui#f612bbb95789b8720fc2f5ce3174f6e4dcf59096"
 dependencies = [
  "ab_glyph",
  "bitflags 2.13.0",
  "libm",
+ "raw-window-handle",
  "scarlet-ui-macros",
  "zune-jpeg",
 ]
@@ -2589,7 +2590,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui-macros"
 version = "0.1.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui#3bb6401776d0930f5f0bef30dc5305a486fc0afe"
+source = "git+https://github.com/petitstrawberry/scarlet-ui#f612bbb95789b8720fc2f5ce3174f6e4dcf59096"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2599,7 +2600,7 @@ dependencies = [
 [[package]]
 name = "scarlet-ui-platform-sws"
 version = "0.1.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui#3bb6401776d0930f5f0bef30dc5305a486fc0afe"
+source = "git+https://github.com/petitstrawberry/scarlet-ui#f612bbb95789b8720fc2f5ce3174f6e4dcf59096"
 dependencies = [
  "scarlet-ui-core",
  "sws-client",
@@ -2609,8 +2610,9 @@ dependencies = [
 [[package]]
 name = "scarlet-ui-platform-winit"
 version = "0.1.0"
-source = "git+https://github.com/petitstrawberry/scarlet-ui#3bb6401776d0930f5f0bef30dc5305a486fc0afe"
+source = "git+https://github.com/petitstrawberry/scarlet-ui#f612bbb95789b8720fc2f5ce3174f6e4dcf59096"
 dependencies = [
+ "raw-window-handle",
  "scarlet-ui-core",
  "softbuffer",
  "winit",
@@ -2976,7 +2978,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sws-client"
 version = "0.1.0"
-source = "git+https://github.com/petitstrawberry/Scarlet?branch=dev#2953c8620c55ba448ec8804a801558bf7085b150"
+source = "git+https://github.com/petitstrawberry/Scarlet?branch=dev#6871392cfa8d55f2f8d41acfa664e65d733f4b94"
 dependencies = [
  "scarlet-os",
  "sws-protocol",
@@ -2985,13 +2987,13 @@ dependencies = [
 [[package]]
 name = "sws-protocol"
 version = "0.16.0"
-source = "git+https://github.com/petitstrawberry/Scarlet?branch=dev#2953c8620c55ba448ec8804a801558bf7085b150"
+source = "git+https://github.com/petitstrawberry/Scarlet?branch=dev#6871392cfa8d55f2f8d41acfa664e65d733f4b94"
 
 [[package]]
 name = "syn"
-version = "2.0.117"
+version = "2.0.118"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
+checksum = "1b9ae57f904213ebb649ce6895b8a66c66f0203b9319718f69a5612a065b1422"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3462,9 +3464,9 @@ dependencies = [
 
 [[package]]
 name = "wayland-protocols"
-version = "0.32.12"
+version = "0.32.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "563a85523cade2429938e790815fd7319062103b9f4a2dc806e9b53b95982d8f"
+checksum = "23d0c813de3daa2ed6520af85a3bd49b0e722a3078506899aa9686fea58dc4b6"
 dependencies = [
  "bitflags 2.13.0",
  "wayland-backend",
@@ -3543,9 +3545,9 @@ dependencies = [
 
 [[package]]
 name = "web_atoms"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7cff6eef815df1834fd250e3a2ff436044d82a9f1bc1980ca1dbdf07effc538"
+checksum = "075474b12bcb3d2e3d4546580e9de478eeeead668a1761e2a8860c836b7ef297"
 dependencies = [
  "phf 0.13.1",
  "phf_codegen 0.13.1",
@@ -3559,14 +3561,14 @@ version = "0.26.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
 dependencies = [
- "webpki-roots 1.0.7",
+ "webpki-roots 1.0.8",
 ]
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.7"
+version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52f5ee44c96cf55f1b349600768e3ece3a8f26010c05265ab73f945bb1a2eb9d"
+checksum = "bf85cb06032201fa7c6f829d7db5a7e5aa45bcc0655327713065f6f0576731bf"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -3583,7 +3585,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3597,6 +3599,15 @@ name = "windows-sys"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d"
+dependencies = [
+ "windows-targets",
+]
+
+[[package]]
+name = "windows-sys"
+version = "0.59.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
 dependencies = [
  "windows-targets",
 ]
