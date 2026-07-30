@@ -155,12 +155,14 @@ impl View for WebView {
             let step = match key_event {
                 KeyEvent::Pressed {
                     keycode: KeyCode::PageDown | KeyCode::PageUp,
+                    ..
                 } => viewport_h * 0.8,
                 _ => 40.0,
             };
             let changed = match key_event {
                 KeyEvent::Pressed {
                     keycode: KeyCode::Down | KeyCode::PageDown,
+                    ..
                 } => {
                     let mut sy = scroll_y_key.borrow_mut();
                     let new_sy = (*sy + step).clamp(0.0, max_scroll());
@@ -173,6 +175,7 @@ impl View for WebView {
                 }
                 KeyEvent::Pressed {
                     keycode: KeyCode::Up | KeyCode::PageUp,
+                    ..
                 } => {
                     let mut sy = scroll_y_key.borrow_mut();
                     let new_sy = (*sy - step).clamp(0.0, max_scroll());
@@ -185,6 +188,7 @@ impl View for WebView {
                 }
                 KeyEvent::Pressed {
                     keycode: KeyCode::Home,
+                    ..
                 } => {
                     let mut sy = scroll_y_key.borrow_mut();
                     if *sy > 0.0 {
@@ -196,6 +200,7 @@ impl View for WebView {
                 }
                 KeyEvent::Pressed {
                     keycode: KeyCode::End,
+                    ..
                 } => {
                     let max = max_scroll();
                     let mut sy = scroll_y_key.borrow_mut();
