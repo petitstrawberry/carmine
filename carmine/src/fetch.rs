@@ -24,9 +24,6 @@ const RESOLVERD_SOCKET_PATH: &str = "/tmp/resolverd.sock";
 #[cfg(target_os = "scarlet")]
 const MAX_REDIRECTS: usize = 8;
 
-#[cfg(target_os = "scarlet")]
-const FALLBACK_TLS_UNIX_TIME: u64 = 1_781_481_600;
-
 pub trait HttpBackend: Send + Sync {
     fn fetch_text(&self, url: &str) -> Result<String, String>;
     fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>, String>;
@@ -57,13 +54,12 @@ struct ScarletTimeProvider;
 #[cfg(target_os = "scarlet")]
 impl rustls::time_provider::TimeProvider for ScarletTimeProvider {
     fn current_time(&self) -> Option<rustls_pki_types::UnixTime> {
-        let seconds = std::env::var("CARMINE_TLS_UNIX_TIME")
+        let time = std::env::var("CARMINE_TLS_UNIX_TIME")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(FALLBACK_TLS_UNIX_TIME);
-        Some(rustls_pki_types::UnixTime::since_unix_epoch(
-            Duration::from_secs(seconds),
-        ))
+            .map(Duration::from_secs)
+            .or_else(scarlet_os::time::system_time)?;
+        Some(rustls_pki_types::UnixTime::since_unix_epoch(time))
     }
 }
 
