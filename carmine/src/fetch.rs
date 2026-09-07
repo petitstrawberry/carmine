@@ -104,6 +104,7 @@ impl Write for ScarletStream {
 fn stream_error_to_io(error: StreamError) -> io::Error {
     match error {
         StreamError::WouldBlock => io::Error::new(io::ErrorKind::WouldBlock, "would block"),
+        StreamError::Interrupted => io::Error::new(io::ErrorKind::Interrupted, "interrupted"),
         StreamError::EndOfStream => io::Error::new(io::ErrorKind::UnexpectedEof, "end of stream"),
         StreamError::PermissionDenied => {
             io::Error::new(io::ErrorKind::PermissionDenied, "permission denied")
