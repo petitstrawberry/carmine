@@ -17,7 +17,7 @@ struct FontBook {
 
 fn load_fonts() -> FontBook {
     let paths = [
-        "/fonts/Mplus1-Regular.ttf",
+        "/share/fonts/Mplus1-Regular.ttf",
         "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
         "/System/Library/Fonts/ヒラギノ角ゴシック W4.ttc",
         "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
@@ -29,7 +29,7 @@ fn load_fonts() -> FontBook {
         "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
         "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-        "/fonts/DejaVuSans.ttf",
+        "/share/fonts/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/System/Library/Fonts/Supplemental/Arial.ttf",
     ];
