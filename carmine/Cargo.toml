@@ -17,9 +17,9 @@ carmine-core = { path = "../carmine-core" }
 clap = { version = "4", features = ["derive"] }
 url = "2"
 
-scarlet-sys = { git = "https://github.com/petitstrawberry/Scarlet", branch = "dev", package = "scarlet-sys", optional = true }
-scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", package = "scarlet-ui", default-features = false, features = ["std", "platform-sws"], optional = true }
-scarlet-ui-macros = { git = "https://github.com/petitstrawberry/scarlet-ui", package = "scarlet-ui-macros", optional = true }
+scarlet-sys = { git = "https://github.com/petitstrawberry/Scarlet", rev = "b3d2a55740a3d2ca49daad0ec7baba233f706f7a", package = "scarlet-sys", optional = true }
+scarlet-ui = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "e6e00f11c95de371057899ec05b7a832d04adc7f", package = "scarlet-ui", default-features = false, features = ["std", "platform-sws"], optional = true }
+scarlet-ui-macros = { git = "https://github.com/petitstrawberry/scarlet-ui", rev = "e6e00f11c95de371057899ec05b7a832d04adc7f", package = "scarlet-ui-macros", optional = true }
 scraper = "0.27.0"
 ego-tree = "0.11.0"
 encoding_rs = "0.8"
@@ -31,4 +31,4 @@ rustls-pki-types = "1"
 webpki-roots = "1"
 
 [target.'cfg(target_os = "scarlet")'.dependencies]
-scarlet-os = { git = "https://github.com/petitstrawberry/Scarlet", branch = "dev", package = "scarlet-os" }
+scarlet-os = { git = "https://github.com/petitstrawberry/Scarlet", rev = "b3d2a55740a3d2ca49daad0ec7baba233f706f7a", package = "scarlet-os" }
